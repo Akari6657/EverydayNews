@@ -1,0 +1,97 @@
+"""Shared pytest fixtures for Daily Headline Agent tests."""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import pytest
+
+from src.models import (
+    AppConfig,
+    Article,
+    EmailOutputConfig,
+    FeedConfig,
+    LLMConfig,
+    MarkdownOutputConfig,
+    OutputConfig,
+    PipelineConfig,
+    ScheduleConfig,
+    SourceConfig,
+    TelegramOutputConfig,
+)
+
+
+@pytest.fixture
+def sample_config(tmp_path: Path) -> AppConfig:
+    """Return a minimal app config for tests."""
+
+    return AppConfig(
+        sources=[
+            SourceConfig(
+                name="New York Times",
+                slug="nyt",
+                feeds=[FeedConfig(url="https://example.com/nyt.xml", category="top")],
+            ),
+            SourceConfig(
+                name="BBC News",
+                slug="bbc",
+                feeds=[FeedConfig(url="https://example.com/bbc.xml", category="top")],
+            ),
+        ],
+        pipeline=PipelineConfig(
+            max_articles_per_source=10,
+            total_articles_for_summary=5,
+            dedup_similarity_threshold=0.7,
+            language="zh-CN",
+            briefing_style="concise",
+        ),
+        llm=LLMConfig(
+            provider="deepseek",
+            model="deepseek-chat",
+            base_url="https://api.deepseek.com",
+            api_key_env="DEEPSEEK_API_KEY",
+            max_tokens=4096,
+            temperature=0.3,
+        ),
+        output=OutputConfig(
+            markdown=MarkdownOutputConfig(enabled=True, directory="output"),
+            email=EmailOutputConfig(
+                enabled=False,
+                smtp_host="",
+                smtp_port=587,
+                sender="",
+                recipients=[],
+            ),
+            telegram=TelegramOutputConfig(
+                enabled=False,
+                bot_token_env="TELEGRAM_BOT_TOKEN",
+                chat_id_env="TELEGRAM_CHAT_ID",
+            ),
+        ),
+        schedule=ScheduleConfig(timezone="Asia/Shanghai", run_at="08:00"),
+        root_dir=tmp_path,
+        config_path=tmp_path / "config.yaml",
+    )
+
+
+@pytest.fixture
+def make_article():
+    """Create article test data with sensible defaults."""
+
+    def _make_article(**overrides) -> Article:
+        published = overrides.pop("published", datetime.now(timezone.utc) - timedelta(hours=1))
+        values = {
+            "title": "Markets rally as inflation cools",
+            "description": "Stocks rose after the latest inflation report.",
+            "link": "https://example.com/story",
+            "source_name": "New York Times",
+            "source_slug": "nyt",
+            "category": "top",
+            "published": published,
+            "guid": "guid-1",
+        }
+        values.update(overrides)
+        return Article(**values)
+
+    return _make_article
