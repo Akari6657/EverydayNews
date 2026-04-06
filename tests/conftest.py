@@ -10,15 +10,20 @@ import pytest
 from src.models import (
     AppConfig,
     Article,
+    ArticleCluster,
     DedupConfig,
     EmailOutputConfig,
     FeedConfig,
+    JsonOutputConfig,
     LLMConfig,
     MarkdownOutputConfig,
     OutputConfig,
     PipelineConfig,
     ScheduleConfig,
     SourceConfig,
+    SummarizerConfig,
+    SummarizerMapConfig,
+    SummarizerReduceConfig,
     TelegramOutputConfig,
 )
 
@@ -54,6 +59,10 @@ def sample_config(tmp_path: Path) -> AppConfig:
             clustering_algorithm="greedy",
             cache_embeddings=True,
         ),
+        summarizer=SummarizerConfig(
+            map=SummarizerMapConfig(batch_size=5, max_retries=2),
+            reduce=SummarizerReduceConfig(top_k=30, max_retries=2),
+        ),
         llm=LLMConfig(
             provider="deepseek",
             model="deepseek-chat",
@@ -63,7 +72,8 @@ def sample_config(tmp_path: Path) -> AppConfig:
             temperature=0.3,
         ),
         output=OutputConfig(
-            markdown=MarkdownOutputConfig(enabled=True, directory="output"),
+            markdown=MarkdownOutputConfig(enabled=True, directory="output/md", group_by_month=True),
+            json=JsonOutputConfig(enabled=True, directory="output/json", group_by_month=True),
             email=EmailOutputConfig(
                 enabled=False,
                 smtp_host="",
@@ -103,3 +113,19 @@ def make_article():
         return Article(**values)
 
     return _make_article
+
+
+@pytest.fixture
+def make_cluster(make_article):
+    """Create article clusters for map-stage summarizer tests."""
+
+    def _make_cluster(cluster_id: str = "cluster-1", primary: Article | None = None, duplicates=None) -> ArticleCluster:
+        primary_article = primary or make_article(guid=f"{cluster_id}-primary")
+        duplicate_articles = list(duplicates or [])
+        return ArticleCluster(
+            cluster_id=cluster_id,
+            primary=primary_article,
+            duplicates=duplicate_articles,
+        )
+
+    return _make_cluster

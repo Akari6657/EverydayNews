@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import argparse
 import logging
-from datetime import datetime
 from typing import Sequence
 
 from .config_loader import get_config
-from .dedup import deduplicate_articles
+from .dedup import deduplicate
 from .fetcher import fetch_all_feeds
 from .formatter import format_briefing
+from .models import ArticleCluster
 from .notifier import notify
-from .summarizer import summarize_articles
+from .summarizer_map import summarize_clusters_with_usage
+from .summarizer_reduce import build_final_briefing
 
 LOGGER = logging.getLogger(__name__)
 
@@ -23,14 +24,24 @@ def run_pipeline(config_path: str = "config.yaml", dry_run: bool = False):
     config = get_config(config_path)
     articles = fetch_all_feeds(config)
     LOGGER.info("Fetched %s articles", len(articles))
-    articles = deduplicate_articles(articles, config)
-    LOGGER.info("After dedup: %s articles", len(articles))
+    clusters = deduplicate(articles, config)
+    LOGGER.info("After dedup: %s clusters", len(clusters))
     if dry_run:
-        _log_dry_run_articles(articles)
-        return articles
-    briefing = summarize_articles(articles, config)
-    LOGGER.info("LLM summary generated, tokens: %s", briefing.token_usage)
-    output_path = format_briefing(briefing, articles, config)
+        _log_dry_run_clusters(clusters)
+        return clusters
+    map_result = summarize_clusters_with_usage(clusters, config)
+    LOGGER.info(
+        "Map-stage summaries generated: %s clusters, tokens: %s",
+        len(map_result.summaries),
+        map_result.token_usage,
+    )
+    briefing = build_final_briefing(
+        map_result.summaries,
+        config,
+        token_usage=map_result.token_usage,
+    )
+    LOGGER.info("Reduce-stage briefing generated, tokens: %s", briefing.token_usage)
+    output_path = format_briefing(briefing, None, config)
     LOGGER.info("Briefing saved to %s", output_path)
     notify(output_path, briefing, config)
     return output_path
@@ -65,15 +76,22 @@ def _parse_run_at(value: str) -> tuple[int, int]:
     return hour, minute
 
 
-def _log_dry_run_articles(articles) -> None:
-    """Log dry-run article summaries."""
+def _log_dry_run_clusters(clusters: list[ArticleCluster]) -> None:
+    """Log dry-run cluster summaries."""
 
-    if not articles:
+    if not clusters:
         LOGGER.info("Dry run complete: no new articles found")
         return
-    for index, article in enumerate(articles, start=1):
-        published = article.published.strftime("%Y-%m-%d %H:%M UTC")
-        LOGGER.info("[%s] %s | %s | %s", index, article.source_name, published, article.title)
+    for index, cluster in enumerate(clusters, start=1):
+        published = cluster.primary.published.strftime("%Y-%m-%d %H:%M UTC")
+        LOGGER.info(
+            "[%s] %s 家来源 | %s | %s | %s",
+            index,
+            cluster.source_count,
+            cluster.primary.source_name,
+            published,
+            cluster.primary.title,
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:

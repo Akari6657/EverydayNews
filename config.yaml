@@ -41,6 +41,14 @@ dedup:
   clustering_algorithm: "greedy"
   cache_embeddings: true
 
+summarizer:
+  map:
+    batch_size: 5
+    max_retries: 2
+  reduce:
+    top_k: 30
+    max_retries: 2
+
 llm:
   provider: "deepseek"
   model: "deepseek-chat"
@@ -52,7 +60,12 @@ llm:
 output:
   markdown:
     enabled: true
-    directory: "output"
+    directory: "output/md"
+    group_by_month: true
+  json:
+    enabled: true
+    directory: "output/json"
+    group_by_month: true
   email:
     enabled: false
     smtp_host: ""

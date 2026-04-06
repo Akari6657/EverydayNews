@@ -10,14 +10,14 @@ from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Callable
 
-from .models import AppConfig, BriefingResult
+from .models import AppConfig, BriefingResult, FinalBriefing
 
 LOGGER = logging.getLogger(__name__)
 TELEGRAM_LIMIT = 4096
 SMTP_PASSWORD_ENV = "SMTP_PASSWORD"
 
 
-def notify(output_path: Path, briefing: BriefingResult, config: AppConfig) -> None:
+def notify(output_path: Path, briefing: BriefingResult | FinalBriefing, config: AppConfig) -> None:
     """Deliver the saved briefing through enabled channels."""
 
     LOGGER.info("Markdown briefing saved to %s", output_path)
@@ -34,7 +34,7 @@ def _try_channel(name: str, sender: Callable[[], None]) -> None:
         LOGGER.warning("Failed to send %s notification: %s", name, exc)
 
 
-def _send_email(output_path: Path, briefing: BriefingResult, config: AppConfig) -> None:
+def _send_email(output_path: Path, briefing: BriefingResult | FinalBriefing, config: AppConfig) -> None:
     """Send the briefing over SMTP when enabled."""
 
     settings = config.output.email
@@ -52,7 +52,11 @@ def _send_email(output_path: Path, briefing: BriefingResult, config: AppConfig) 
         smtp.sendmail(settings.sender, settings.recipients, message.as_string())
 
 
-def _build_email_message(output_path: Path, briefing: BriefingResult, config: AppConfig) -> MIMEMultipart:
+def _build_email_message(
+    output_path: Path,
+    briefing: BriefingResult | FinalBriefing,
+    config: AppConfig,
+) -> MIMEMultipart:
     """Build a multipart email for the briefing."""
 
     message = MIMEMultipart("alternative")
@@ -79,7 +83,7 @@ def _markdown_to_html(markdown_text: str) -> str:
         return f"<pre>{markdown_text}</pre>"
 
 
-def _send_telegram(output_path: Path, briefing: BriefingResult, config: AppConfig) -> None:
+def _send_telegram(output_path: Path, briefing: BriefingResult | FinalBriefing, config: AppConfig) -> None:
     """Send the briefing via Telegram Bot API when enabled."""
 
     del briefing

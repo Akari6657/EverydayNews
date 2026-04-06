@@ -47,6 +47,30 @@ class DedupConfig:
 
 
 @dataclass(frozen=True)
+class SummarizerMapConfig:
+    """Map-stage summarization settings."""
+
+    batch_size: int
+    max_retries: int
+
+
+@dataclass(frozen=True)
+class SummarizerReduceConfig:
+    """Reduce-stage summarization settings."""
+
+    top_k: int
+    max_retries: int
+
+
+@dataclass(frozen=True)
+class SummarizerConfig:
+    """Map-reduce summarization configuration."""
+
+    map: SummarizerMapConfig
+    reduce: SummarizerReduceConfig
+
+
+@dataclass(frozen=True)
 class LLMConfig:
     """LLM provider settings."""
 
@@ -64,6 +88,16 @@ class MarkdownOutputConfig:
 
     enabled: bool
     directory: str
+    group_by_month: bool
+
+
+@dataclass(frozen=True)
+class JsonOutputConfig:
+    """Structured JSON output settings."""
+
+    enabled: bool
+    directory: str
+    group_by_month: bool
 
 
 @dataclass(frozen=True)
@@ -91,6 +125,7 @@ class OutputConfig:
     """All output channel settings."""
 
     markdown: MarkdownOutputConfig
+    json: JsonOutputConfig
     email: EmailOutputConfig
     telegram: TelegramOutputConfig
 
@@ -110,6 +145,7 @@ class AppConfig:
     sources: list[SourceConfig]
     pipeline: PipelineConfig
     dedup: DedupConfig
+    summarizer: SummarizerConfig
     llm: LLMConfig
     output: OutputConfig
     schedule: ScheduleConfig
@@ -172,6 +208,43 @@ class ArticleCluster:
         """Return the primary article followed by duplicates."""
 
         return [self.primary] + list(self.duplicates)
+
+
+@dataclass(frozen=True)
+class ClusterSummary:
+    """Map-stage summary for a single deduplicated event cluster."""
+
+    cluster_id: str
+    topic: str
+    headline_zh: str
+    summary_zh: str
+    importance: int
+    entities: list[str]
+    source_names: list[str]
+    primary_link: str
+
+
+@dataclass(frozen=True)
+class MapSummariesResult:
+    """Aggregated result of the map-stage summarization step."""
+
+    summaries: list[ClusterSummary]
+    token_usage: dict[str, int]
+    model: str
+
+
+@dataclass(frozen=True)
+class FinalBriefing:
+    """Reduce-stage structured daily briefing."""
+
+    date: str
+    overview_zh: str
+    topics: dict[str, list[ClusterSummary]]
+    total_clusters: int
+    total_sources: int
+    generated_at: datetime
+    token_usage: dict[str, int]
+    model: str
 
 
 @dataclass(frozen=True)

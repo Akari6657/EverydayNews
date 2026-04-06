@@ -62,7 +62,11 @@ schedule:
 
     assert config.sources[0].slug == "example"
     assert config.dedup.method == "embedding"
+    assert config.summarizer.map.batch_size == 5
     assert config.llm.model == "deepseek-chat"
+    assert config.output.markdown.group_by_month is True
+    assert config.output.json.directory == "output/json"
+    assert config.output.json.group_by_month is True
     assert config.root_dir == tmp_path
 
 

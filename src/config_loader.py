@@ -11,12 +11,16 @@ from .models import (
     DedupConfig,
     EmailOutputConfig,
     FeedConfig,
+    JsonOutputConfig,
     LLMConfig,
     MarkdownOutputConfig,
     OutputConfig,
     PipelineConfig,
     ScheduleConfig,
     SourceConfig,
+    SummarizerConfig,
+    SummarizerMapConfig,
+    SummarizerReduceConfig,
     TelegramOutputConfig,
 )
 
@@ -41,6 +45,7 @@ def get_config(
         sources=_parse_sources(payload),
         pipeline=pipeline,
         dedup=_parse_dedup(payload, pipeline),
+        summarizer=_parse_summarizer(payload),
         llm=_parse_llm(payload),
         output=_parse_output(payload),
         schedule=_parse_schedule(payload),
@@ -163,6 +168,29 @@ def _parse_dedup(payload: dict[str, Any], pipeline: PipelineConfig) -> DedupConf
     )
 
 
+def _parse_summarizer(payload: dict[str, Any]) -> SummarizerConfig:
+    """Parse map-reduce summarizer settings with defaults."""
+
+    section = payload.get("summarizer", {})
+    if not isinstance(section, dict):
+        raise ConfigError("'summarizer' must be a mapping")
+    map_section = section.get("map", {})
+    reduce_section = section.get("reduce", {})
+    if not isinstance(map_section, dict):
+        raise ConfigError("'summarizer.map' must be a mapping")
+    if not isinstance(reduce_section, dict):
+        raise ConfigError("'summarizer.reduce' must be a mapping")
+    map_config = SummarizerMapConfig(
+        batch_size=_positive_int(map_section.get("batch_size", 5), "summarizer.map.batch_size"),
+        max_retries=_positive_int(map_section.get("max_retries", 2), "summarizer.map.max_retries"),
+    )
+    reduce_config = SummarizerReduceConfig(
+        top_k=_positive_int(reduce_section.get("top_k", 30), "summarizer.reduce.top_k"),
+        max_retries=_positive_int(reduce_section.get("max_retries", 2), "summarizer.reduce.max_retries"),
+    )
+    return SummarizerConfig(map=map_config, reduce=reduce_config)
+
+
 def _parse_llm(payload: dict[str, Any]) -> LLMConfig:
     """Parse LLM settings."""
 
@@ -185,9 +213,10 @@ def _parse_output(payload: dict[str, Any]) -> OutputConfig:
 
     section = _require_mapping(payload, "output")
     markdown = _parse_markdown_output(_require_mapping(section, "markdown"))
+    json_output = _parse_json_output(section.get("json"), markdown)
     email = _parse_email_output(_require_mapping(section, "email"))
     telegram = _parse_telegram_output(_require_mapping(section, "telegram"))
-    return OutputConfig(markdown=markdown, email=email, telegram=telegram)
+    return OutputConfig(markdown=markdown, json=json_output, email=email, telegram=telegram)
 
 
 def _parse_markdown_output(section: dict[str, Any]) -> MarkdownOutputConfig:
@@ -196,6 +225,32 @@ def _parse_markdown_output(section: dict[str, Any]) -> MarkdownOutputConfig:
     return MarkdownOutputConfig(
         enabled=_require_bool(section, "enabled"),
         directory=_require_string(section, "directory"),
+        group_by_month=_require_bool_with_default(section, "group_by_month", True),
+    )
+
+
+def _parse_json_output(
+    section: Any,
+    markdown: MarkdownOutputConfig,
+) -> JsonOutputConfig:
+    """Parse JSON output settings, defaulting to a structured sibling directory."""
+
+    if section is None:
+        return JsonOutputConfig(
+            enabled=True,
+            directory=_default_json_directory(markdown.directory),
+            group_by_month=markdown.group_by_month,
+        )
+    if not isinstance(section, dict):
+        raise ConfigError("'output.json' must be a mapping")
+    return JsonOutputConfig(
+        enabled=_require_bool_with_default(section, "enabled", True),
+        directory=_require_string_with_default(
+            section,
+            "directory",
+            _default_json_directory(markdown.directory),
+        ),
+        group_by_month=_require_bool_with_default(section, "group_by_month", markdown.group_by_month),
     )
 
 
@@ -259,6 +314,14 @@ def _require_string(payload: dict[str, Any], key: str) -> str:
     return value.strip()
 
 
+def _require_string_with_default(payload: dict[str, Any], key: str, default: str) -> str:
+    """Require a string when present, otherwise use a default."""
+
+    if key not in payload:
+        return default
+    return _require_string(payload, key)
+
+
 def _require_string_list(payload: dict[str, Any], key: str) -> list[str]:
     """Require a list of strings."""
 
@@ -293,3 +356,29 @@ def _require_bool(payload: dict[str, Any], key: str) -> bool:
     if not isinstance(value, bool):
         raise ConfigError(f"'{key}' must be a boolean")
     return value
+
+
+def _require_bool_with_default(payload: dict[str, Any], key: str, default: bool) -> bool:
+    """Require a boolean when present, otherwise use a default."""
+
+    if key not in payload:
+        return default
+    return _require_bool(payload, key)
+
+
+def _positive_int(value: Any, key: str) -> int:
+    """Require a positive integer value."""
+
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ConfigError(f"'{key}' must be a positive integer")
+    return value
+
+
+def _default_json_directory(markdown_directory: str) -> str:
+    """Return a sensible default JSON directory derived from the Markdown directory."""
+
+    if markdown_directory.endswith("/md"):
+        return markdown_directory[: -len("/md")] + "/json"
+    if markdown_directory == "output":
+        return "output/json"
+    return f"{markdown_directory}/json"
