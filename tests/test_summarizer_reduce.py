@@ -91,28 +91,8 @@ def test_build_final_briefing_groups_topics_and_aggregates_usage(sample_config) 
                         {
                             "overview_zh": "国际局势与能源市场成为今日焦点。",
                             "topics": {
-                                "国际政治": [
-                                    {
-                                        "cluster_id": "cluster-a",
-                                        "headline_zh": "伊朗局势升级",
-                                        "summary_zh": "中东局势持续紧张。",
-                                        "importance": 9,
-                                        "entities": ["伊朗", "美国"],
-                                        "source_names": ["New York Times", "BBC News"],
-                                        "primary_link": "https://example.com/cluster-a",
-                                    }
-                                ],
-                                "经济金融": [
-                                    {
-                                        "cluster_id": "cluster-b",
-                                        "headline_zh": "油价波动加剧",
-                                        "summary_zh": "能源市场受地缘政治影响波动。",
-                                        "importance": 7,
-                                        "entities": ["原油市场"],
-                                        "source_names": ["BBC News"],
-                                        "primary_link": "https://example.com/cluster-b",
-                                    }
-                                ],
+                                "国际政治": ["cluster-a"],
+                                "经济金融": ["cluster-b"],
                             },
                         },
                         ensure_ascii=False,
@@ -153,7 +133,7 @@ def test_build_final_briefing_retries_invalid_json(sample_config, monkeypatch) -
                             json.dumps(
                                 {
                                     "overview_zh": "今日焦点集中在国际政治。",
-                                    "topics": {"国际政治": [{"cluster_id": "cluster-1"}]},
+                                    "topics": {"国际政治": ["cluster-1"]},
                                 },
                                 ensure_ascii=False,
                             )
@@ -185,7 +165,7 @@ def test_build_final_briefing_appends_missing_clusters(sample_config) -> None:
                     json.dumps(
                         {
                             "overview_zh": "今日以国际政治为主。",
-                            "topics": {"国际政治": [{"cluster_id": "cluster-1"}]},
+                            "topics": {"国际政治": ["cluster-1"]},
                         },
                         ensure_ascii=False,
                     )
@@ -222,7 +202,7 @@ def test_build_final_briefing_limits_selected_summaries(sample_config) -> None:
                     json.dumps(
                         {
                             "overview_zh": "只保留了最高优先级新闻。",
-                            "topics": {"国际政治": [{"cluster_id": "cluster-2"}]},
+                            "topics": {"国际政治": ["cluster-2"]},
                         },
                         ensure_ascii=False,
                     )
@@ -248,7 +228,7 @@ def test_build_final_briefing_raises_on_unknown_cluster_id(sample_config) -> Non
                     json.dumps(
                         {
                             "overview_zh": "测试概述。",
-                            "topics": {"国际政治": [{"cluster_id": "unknown"}]},
+                            "topics": {"国际政治": ["unknown"]},
                         },
                         ensure_ascii=False,
                     )
@@ -260,6 +240,38 @@ def test_build_final_briefing_raises_on_unknown_cluster_id(sample_config) -> Non
 
     with pytest.raises(ValueError):
         build_final_briefing([_summary("cluster-1")], sample_config, client=client)
+
+
+def test_build_final_briefing_still_accepts_object_items(sample_config) -> None:
+    """Reduce-stage parser should remain compatible with object items."""
+
+    response = FakeResponse(
+        choices=[
+            FakeChoice(
+                FakeMessage(
+                    json.dumps(
+                        {
+                            "overview_zh": "测试概述。",
+                            "topics": {
+                                "国际政治": [
+                                    {
+                                        "cluster_id": "cluster-1",
+                                        "headline_zh": "覆盖后的标题",
+                                    }
+                                ]
+                            },
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            )
+        ]
+    )
+    client = FakeClient([response])
+
+    briefing = build_final_briefing([_summary("cluster-1")], sample_config, client=client)
+
+    assert briefing.topics["国际政治"][0].headline_zh == "覆盖后的标题"
 
 
 def _summary(
