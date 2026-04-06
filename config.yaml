@@ -1,0 +1,62 @@
+sources:
+  - name: "New York Times"
+    slug: "nyt"
+    feeds:
+      - url: "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml"
+        category: "homepage"
+      - url: "https://rss.nytimes.com/services/xml/rss/nyt/World.xml"
+        category: "world"
+
+  - name: "BBC News"
+    slug: "bbc"
+    feeds:
+      - url: "http://feeds.bbci.co.uk/news/rss.xml"
+        category: "top"
+
+  - name: "The Guardian"
+    slug: "guardian"
+    feeds:
+      - url: "https://www.theguardian.com/world/rss"
+        category: "world"
+      - url: "https://www.theguardian.com/uk/rss"
+        category: "uk"
+
+  - name: "New York Post"
+    slug: "nyp"
+    feeds:
+      - url: "https://nypost.com/feed/"
+        category: "top"
+
+pipeline:
+  max_articles_per_source: 15
+  total_articles_for_summary: 30
+  dedup_similarity_threshold: 0.7
+  language: "zh-CN"
+  briefing_style: "concise"
+
+llm:
+  provider: "deepseek"
+  model: "deepseek-chat"
+  base_url: "https://api.deepseek.com"
+  api_key_env: "DEEPSEEK_API_KEY"
+  max_tokens: 4096
+  temperature: 0.3
+
+output:
+  markdown:
+    enabled: true
+    directory: "output"
+  email:
+    enabled: false
+    smtp_host: ""
+    smtp_port: 587
+    sender: ""
+    recipients: []
+  telegram:
+    enabled: false
+    bot_token_env: "TELEGRAM_BOT_TOKEN"
+    chat_id_env: "TELEGRAM_CHAT_ID"
+
+schedule:
+  timezone: "Asia/Shanghai"
+  run_at: "08:00"
