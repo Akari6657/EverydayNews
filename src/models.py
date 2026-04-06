@@ -36,6 +36,17 @@ class PipelineConfig:
 
 
 @dataclass(frozen=True)
+class DedupConfig:
+    """Deduplication strategy settings."""
+
+    method: str
+    model: str
+    similarity_threshold: float
+    clustering_algorithm: str
+    cache_embeddings: bool
+
+
+@dataclass(frozen=True)
 class LLMConfig:
     """LLM provider settings."""
 
@@ -98,6 +109,7 @@ class AppConfig:
 
     sources: list[SourceConfig]
     pipeline: PipelineConfig
+    dedup: DedupConfig
     llm: LLMConfig
     output: OutputConfig
     schedule: ScheduleConfig
@@ -122,6 +134,44 @@ class Article:
     category: str
     published: datetime
     guid: str
+
+
+@dataclass
+class ArticleCluster:
+    """A group of articles reporting the same event across sources."""
+
+    cluster_id: str
+    primary: Article
+    duplicates: list[Article] = field(default_factory=list)
+    source_count: int = 0
+    source_names: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        """Initialize metadata derived from cluster membership."""
+
+        self.refresh_metadata()
+
+    def add_duplicate(self, article: Article) -> None:
+        """Append a duplicate article and refresh metadata."""
+
+        self.duplicates.append(article)
+        self.refresh_metadata()
+
+    def refresh_metadata(self) -> None:
+        """Refresh source metadata from all current articles."""
+
+        distinct_names: list[str] = []
+        for article in self.all_articles:
+            if article.source_name not in distinct_names:
+                distinct_names.append(article.source_name)
+        self.source_names = distinct_names
+        self.source_count = len(distinct_names)
+
+    @property
+    def all_articles(self) -> list[Article]:
+        """Return the primary article followed by duplicates."""
+
+        return [self.primary] + list(self.duplicates)
 
 
 @dataclass(frozen=True)

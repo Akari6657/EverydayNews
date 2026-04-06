@@ -10,6 +10,7 @@ import pytest
 from src.models import (
     AppConfig,
     Article,
+    DedupConfig,
     EmailOutputConfig,
     FeedConfig,
     LLMConfig,
@@ -45,6 +46,13 @@ def sample_config(tmp_path: Path) -> AppConfig:
             dedup_similarity_threshold=0.7,
             language="zh-CN",
             briefing_style="concise",
+        ),
+        dedup=DedupConfig(
+            method="difflib",
+            model="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+            similarity_threshold=0.7,
+            clustering_algorithm="greedy",
+            cache_embeddings=True,
         ),
         llm=LLMConfig(
             provider="deepseek",

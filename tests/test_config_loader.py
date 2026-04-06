@@ -61,6 +61,7 @@ schedule:
     config = get_config(config_path=config_path, env_path=env_path)
 
     assert config.sources[0].slug == "example"
+    assert config.dedup.method == "embedding"
     assert config.llm.model == "deepseek-chat"
     assert config.root_dir == tmp_path
 

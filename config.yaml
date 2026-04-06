@@ -34,6 +34,13 @@ pipeline:
   language: "zh-CN"
   briefing_style: "concise"
 
+dedup:
+  method: "embedding"
+  model: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+  similarity_threshold: 0.75
+  clustering_algorithm: "greedy"
+  cache_embeddings: true
+
 llm:
   provider: "deepseek"
   model: "deepseek-chat"

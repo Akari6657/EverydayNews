@@ -8,6 +8,7 @@ from typing import Any
 
 from .models import (
     AppConfig,
+    DedupConfig,
     EmailOutputConfig,
     FeedConfig,
     LLMConfig,
@@ -35,9 +36,11 @@ def get_config(
     env_file = Path(env_path).resolve() if env_path else root_dir / ".env"
     _load_environment(env_file)
     payload = _load_yaml(config_file)
+    pipeline = _parse_pipeline(payload)
     return AppConfig(
         sources=_parse_sources(payload),
-        pipeline=_parse_pipeline(payload),
+        pipeline=pipeline,
+        dedup=_parse_dedup(payload, pipeline),
         llm=_parse_llm(payload),
         output=_parse_output(payload),
         schedule=_parse_schedule(payload),
@@ -120,6 +123,43 @@ def _parse_pipeline(payload: dict[str, Any]) -> PipelineConfig:
         dedup_similarity_threshold=_require_float(section, "dedup_similarity_threshold"),
         language=_require_string(section, "language"),
         briefing_style=_require_string(section, "briefing_style"),
+    )
+
+
+def _parse_dedup(payload: dict[str, Any], pipeline: PipelineConfig) -> DedupConfig:
+    """Parse deduplication settings with sensible defaults."""
+
+    section = payload.get("dedup")
+    if section is None:
+        return DedupConfig(
+            method="embedding",
+            model="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+            similarity_threshold=pipeline.dedup_similarity_threshold,
+            clustering_algorithm="greedy",
+            cache_embeddings=True,
+        )
+    if not isinstance(section, dict):
+        raise ConfigError("'dedup' must be a mapping")
+    method = str(section.get("method", "embedding")).strip()
+    clustering_algorithm = str(section.get("clustering_algorithm", "greedy")).strip()
+    if method not in {"embedding", "difflib"}:
+        raise ConfigError("'dedup.method' must be either 'embedding' or 'difflib'")
+    if clustering_algorithm not in {"greedy", "dbscan"}:
+        raise ConfigError("'dedup.clustering_algorithm' must be either 'greedy' or 'dbscan'")
+    cache_embeddings = section.get("cache_embeddings", True)
+    if not isinstance(cache_embeddings, bool):
+        raise ConfigError("'dedup.cache_embeddings' must be a boolean")
+    return DedupConfig(
+        method=method,
+        model=str(
+            section.get(
+                "model",
+                "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+            )
+        ).strip(),
+        similarity_threshold=float(section.get("similarity_threshold", pipeline.dedup_similarity_threshold)),
+        clustering_algorithm=clustering_algorithm,
+        cache_embeddings=cache_embeddings,
     )
 
 
