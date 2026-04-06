@@ -140,6 +140,8 @@ def _parse_pipeline(payload: dict[str, Any]) -> PipelineConfig:
             minimum=0,
             maximum=10,
         ),
+        max_items_per_topic=_positive_int_with_default(section, "max_items_per_topic", 4),
+        exclude_summary_keywords=_optional_string_list(section, "exclude_summary_keywords"),
         dedup_similarity_threshold=_require_float(section, "dedup_similarity_threshold"),
         language=_require_string(section, "language"),
         briefing_style=_require_string(section, "briefing_style"),
@@ -395,6 +397,14 @@ def _positive_int(value: Any, key: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ConfigError(f"'{key}' must be a positive integer")
     return value
+
+
+def _positive_int_with_default(payload: dict[str, Any], key: str, default: int) -> int:
+    """Require a positive integer when present, otherwise use a default."""
+
+    if key not in payload:
+        return default
+    return _positive_int(payload.get(key), key)
 
 
 def _bounded_int_with_default(

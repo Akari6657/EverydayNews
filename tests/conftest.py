@@ -49,6 +49,8 @@ def sample_config(tmp_path: Path) -> AppConfig:
             max_articles_per_source=10,
             total_articles_for_summary=5,
             importance_threshold=4,
+            max_items_per_topic=4,
+            exclude_summary_keywords=["最新动态", "持续更新"],
             dedup_similarity_threshold=0.7,
             language="zh-CN",
             briefing_style="concise",

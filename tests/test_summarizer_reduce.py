@@ -249,6 +249,68 @@ def test_build_final_briefing_filters_below_importance_threshold(sample_config) 
     assert [item.cluster_id for item in briefing.topics["国际政治"]] == ["cluster-3", "cluster-2"]
 
 
+def test_build_final_briefing_filters_noise_keywords(sample_config) -> None:
+    """Configured summary noise keywords should exclude low-signal live wrappers."""
+
+    summaries = [
+        _summary("cluster-1", headline_zh="伊朗战争最新动态", importance=8),
+        _summary("cluster-2", headline_zh="特朗普设定新期限", importance=8),
+    ]
+    response = FakeResponse(
+        choices=[
+            FakeChoice(
+                FakeMessage(
+                    json.dumps(
+                        {
+                            "overview_zh": "保留了更具信息量的新闻。",
+                            "topics": {"国际政治": ["cluster-2"]},
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            )
+        ]
+    )
+    client = FakeClient([response])
+
+    briefing = build_final_briefing(summaries, sample_config, client=client)
+
+    assert briefing.total_clusters == 1
+    assert [item.cluster_id for item in briefing.topics["国际政治"]] == ["cluster-2"]
+
+
+def test_build_final_briefing_trims_each_topic_to_limit(sample_config) -> None:
+    """Each topic should keep at most the configured number of items."""
+
+    config = replace(sample_config, pipeline=replace(sample_config.pipeline, max_items_per_topic=2))
+    summaries = [
+        _summary("cluster-1", importance=9),
+        _summary("cluster-2", importance=8),
+        _summary("cluster-3", importance=7),
+    ]
+    response = FakeResponse(
+        choices=[
+            FakeChoice(
+                FakeMessage(
+                    json.dumps(
+                        {
+                            "overview_zh": "测试主题上限。",
+                            "topics": {"国际政治": ["cluster-1", "cluster-2", "cluster-3"]},
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            )
+        ]
+    )
+    client = FakeClient([response])
+
+    briefing = build_final_briefing(summaries, config, client=client)
+
+    assert briefing.total_clusters == 2
+    assert [item.cluster_id for item in briefing.topics["国际政治"]] == ["cluster-1", "cluster-2"]
+
+
 def test_build_final_briefing_raises_on_unknown_cluster_id(sample_config) -> None:
     """Unknown cluster ids from the model should raise a clear error."""
 

@@ -43,6 +43,8 @@ pipeline:
   max_articles_per_source: 15
   total_articles_for_summary: 30
   importance_threshold: 5
+  max_items_per_topic: 4
+  exclude_summary_keywords: ["最新动态", "持续更新", "直播", "live updates", "here's the latest"]
   dedup_similarity_threshold: 0.7
   language: "zh-CN"
   briefing_style: "concise"

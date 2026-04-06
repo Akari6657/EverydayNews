@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -55,6 +56,7 @@ def _select_summaries(summaries: list[ClusterSummary], config: AppConfig) -> lis
         summary
         for summary in summaries
         if summary.importance >= config.pipeline.importance_threshold
+        and _passes_summary_filters(summary, config)
     ]
     ranked = sorted(
         filtered,
@@ -188,13 +190,15 @@ def _parse_final_briefing(
         topics[topic_name.strip()] = parsed_items
 
     _append_missing_summaries(topics, selected, seen_cluster_ids)
+    _trim_topics(topics, config.pipeline.max_items_per_topic)
+    displayed = [summary for items in topics.values() for summary in items]
     usage = _merge_token_usage(prior_token_usage, _response_token_usage(response))
     return FinalBriefing(
         date=generated_at.astimezone(timezone.utc).strftime("%Y-%m-%d"),
         overview_zh=overview.strip(),
         topics=topics,
-        total_clusters=len(selected),
-        total_sources=len({name for summary in selected for name in summary.source_names}),
+        total_clusters=len(displayed),
+        total_sources=len({name for summary in displayed for name in summary.source_names}),
         generated_at=generated_at,
         token_usage=usage,
         model=str(getattr(response, "model", config.llm.model)),
@@ -282,12 +286,39 @@ def _append_missing_summaries(
         topics.setdefault(summary.topic, []).append(summary)
 
 
+def _trim_topics(topics: dict[str, list[ClusterSummary]], limit: int) -> None:
+    """Trim each topic section to a maximum number of items."""
+
+    for topic_name, items in list(topics.items()):
+        topics[topic_name] = items[:limit]
+
+
 def _optional_string(value: Any) -> str:
     """Return a stripped string or an empty string."""
 
     if isinstance(value, str):
         return value.strip()
     return ""
+
+
+def _passes_summary_filters(summary: ClusterSummary, config: AppConfig) -> bool:
+    """Return whether a summary should remain eligible for reduce."""
+
+    haystack = _normalize_filter_text(
+        f"{summary.headline_zh}\n{summary.summary_zh}\n{summary.primary_link}"
+    )
+    for keyword in config.pipeline.exclude_summary_keywords:
+        normalized = _normalize_filter_text(keyword)
+        if normalized and normalized in haystack:
+            return False
+    return True
+
+
+def _normalize_filter_text(text: str) -> str:
+    """Normalize text for resilient summary keyword matching."""
+
+    sanitized = text.casefold().replace("'", "").replace("’", "")
+    return " ".join(re.sub(r"[^a-z0-9\u4e00-\u9fff]+", " ", sanitized).split())
 
 
 def _coerce_importance(value: Any, fallback: int) -> int:

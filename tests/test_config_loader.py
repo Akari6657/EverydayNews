@@ -65,6 +65,8 @@ schedule:
     assert config.summarizer.map.batch_size == 5
     assert config.llm.model == "deepseek-chat"
     assert config.pipeline.importance_threshold == 4
+    assert config.pipeline.max_items_per_topic == 4
+    assert config.pipeline.exclude_summary_keywords == []
     assert config.output.markdown.group_by_month is True
     assert config.output.json.directory == "output/json"
     assert config.output.json.group_by_month is True

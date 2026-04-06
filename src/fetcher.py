@@ -140,8 +140,9 @@ def _should_exclude_entry(
 ) -> bool:
     """Return whether the entry should be filtered before article creation."""
 
-    haystack = f"{title}\n{description}".casefold()
-    if any(keyword.casefold() in haystack for keyword in feed.exclude_keywords):
+    link = _get_field(entry, "link")
+    haystack = _normalize_filter_text(f"{title}\n{description}\n{link}")
+    if any(_normalize_filter_text(keyword) in haystack for keyword in feed.exclude_keywords):
         return True
     entry_categories = {value.casefold() for value in _entry_categories(entry)}
     for category in feed.exclude_categories:
@@ -224,3 +225,10 @@ def _strip_html(text: str) -> str:
     without_tags = HTML_TAG_RE.sub(" ", text)
     collapsed = " ".join(unescape(without_tags).split())
     return collapsed.strip()
+
+
+def _normalize_filter_text(text: str) -> str:
+    """Normalize text for resilient keyword matching."""
+
+    sanitized = text.casefold().replace("'", "").replace("’", "")
+    return " ".join(re.sub(r"[^a-z0-9\u4e00-\u9fff]+", " ", sanitized).split())

@@ -33,6 +33,8 @@ class PipelineConfig:
     max_articles_per_source: int
     total_articles_for_summary: int
     importance_threshold: int
+    max_items_per_topic: int
+    exclude_summary_keywords: list[str]
     dedup_similarity_threshold: float
     language: str
     briefing_style: str
