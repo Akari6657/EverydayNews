@@ -10,7 +10,7 @@ from email.utils import parsedate_to_datetime
 from html import unescape
 from typing import Any
 
-from .models import AppConfig, Article, SourceConfig
+from .models import AppConfig, Article, FeedConfig, SourceConfig
 
 LOGGER = logging.getLogger(__name__)
 FETCH_TIMEOUT_SECONDS = 10
@@ -39,25 +39,24 @@ def _fetch_source_articles(
 
     articles: list[Article] = []
     for feed in source.feeds:
-        articles.extend(_fetch_feed_articles(source, feed.url, feed.category, reference_time))
+        articles.extend(_fetch_feed_articles(source, feed, reference_time))
     articles.sort(key=lambda article: article.published, reverse=True)
     return articles[: config.pipeline.max_articles_per_source]
 
 
 def _fetch_feed_articles(
     source: SourceConfig,
-    url: str,
-    category: str,
+    feed: FeedConfig,
     reference_time: datetime,
 ) -> list[Article]:
     """Fetch and parse one RSS feed."""
 
     try:
-        raw_bytes = _download_feed(url)
+        raw_bytes = _download_feed(feed.url)
         parsed_feed = _parse_feed_bytes(raw_bytes)
-        return _entries_to_articles(parsed_feed, source, category, reference_time)
+        return _entries_to_articles(parsed_feed, source, feed, reference_time)
     except Exception as exc:
-        LOGGER.warning("Failed to fetch feed %s: %s", url, exc)
+        LOGGER.warning("Failed to fetch feed %s: %s", feed.url, exc)
         return []
 
 
@@ -82,7 +81,7 @@ def _parse_feed_bytes(raw_bytes: bytes) -> Any:
 def _entries_to_articles(
     parsed_feed: Any,
     source: SourceConfig,
-    category: str,
+    feed: FeedConfig,
     reference_time: datetime,
 ) -> list[Article]:
     """Convert feed entries into recent article objects."""
@@ -90,7 +89,7 @@ def _entries_to_articles(
     articles: list[Article] = []
     cutoff = reference_time - timedelta(hours=24)
     for entry in _get_entries(parsed_feed):
-        article = _entry_to_article(entry, source, category, reference_time)
+        article = _entry_to_article(entry, source, feed, reference_time)
         if article and article.published >= cutoff:
             articles.append(article)
     return articles
@@ -107,7 +106,7 @@ def _get_entries(parsed_feed: Any) -> list[Any]:
 def _entry_to_article(
     entry: Any,
     source: SourceConfig,
-    category: str,
+    feed: FeedConfig,
     reference_time: datetime,
 ) -> Article | None:
     """Convert a single feed entry into an article."""
@@ -117,6 +116,8 @@ def _entry_to_article(
     if not title or not link:
         return None
     description = _strip_html(_get_field(entry, "summary") or _get_field(entry, "description"))
+    if _should_exclude_entry(entry, feed, title, description):
+        return None
     published = _parse_published(entry, reference_time)
     guid = _get_field(entry, "id") or _get_field(entry, "guid") or link
     return Article(
@@ -125,10 +126,52 @@ def _entry_to_article(
         link=link,
         source_name=source.name,
         source_slug=source.slug,
-        category=category,
+        category=feed.category,
         published=published,
         guid=guid,
     )
+
+
+def _should_exclude_entry(
+    entry: Any,
+    feed: FeedConfig,
+    title: str,
+    description: str,
+) -> bool:
+    """Return whether the entry should be filtered before article creation."""
+
+    haystack = f"{title}\n{description}".casefold()
+    if any(keyword.casefold() in haystack for keyword in feed.exclude_keywords):
+        return True
+    entry_categories = {value.casefold() for value in _entry_categories(entry)}
+    for category in feed.exclude_categories:
+        if category.casefold() in entry_categories:
+            return True
+    return False
+
+
+def _entry_categories(entry: Any) -> list[str]:
+    """Extract category-like labels from RSS entry metadata."""
+
+    categories: list[str] = []
+    primary_category = _get_field(entry, "category")
+    if primary_category:
+        categories.append(primary_category)
+    tags = entry.get("tags", []) if isinstance(entry, dict) else getattr(entry, "tags", [])
+    if isinstance(tags, list):
+        for tag in tags:
+            if isinstance(tag, dict):
+                value = tag.get("term") or tag.get("label") or tag.get("name") or ""
+            else:
+                value = (
+                    getattr(tag, "term", "")
+                    or getattr(tag, "label", "")
+                    or getattr(tag, "name", "")
+                )
+            text = str(value).strip()
+            if text:
+                categories.append(text)
+    return categories
 
 
 def _get_field(entry: Any, key: str) -> str:

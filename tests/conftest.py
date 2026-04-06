@@ -48,6 +48,7 @@ def sample_config(tmp_path: Path) -> AppConfig:
         pipeline=PipelineConfig(
             max_articles_per_source=10,
             total_articles_for_summary=5,
+            importance_threshold=4,
             dedup_similarity_threshold=0.7,
             language="zh-CN",
             briefing_style="concise",

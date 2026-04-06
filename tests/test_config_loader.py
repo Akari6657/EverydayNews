@@ -64,6 +64,7 @@ schedule:
     assert config.dedup.method == "embedding"
     assert config.summarizer.map.batch_size == 5
     assert config.llm.model == "deepseek-chat"
+    assert config.pipeline.importance_threshold == 4
     assert config.output.markdown.group_by_month is True
     assert config.output.json.directory == "output/json"
     assert config.output.json.group_by_month is True

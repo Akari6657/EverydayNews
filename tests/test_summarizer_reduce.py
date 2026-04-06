@@ -218,6 +218,37 @@ def test_build_final_briefing_limits_selected_summaries(sample_config) -> None:
     assert briefing.topics["国际政治"][0].cluster_id == "cluster-2"
 
 
+def test_build_final_briefing_filters_below_importance_threshold(sample_config) -> None:
+    """Reduce-stage should drop summaries below the configured importance threshold."""
+
+    summaries = [
+        _summary("cluster-1", importance=3),
+        _summary("cluster-2", importance=4),
+        _summary("cluster-3", importance=7),
+    ]
+    response = FakeResponse(
+        choices=[
+            FakeChoice(
+                FakeMessage(
+                    json.dumps(
+                        {
+                            "overview_zh": "保留了更重要的新闻。",
+                            "topics": {"国际政治": ["cluster-3", "cluster-2"]},
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            )
+        ]
+    )
+    client = FakeClient([response])
+
+    briefing = build_final_briefing(summaries, sample_config, client=client)
+
+    assert briefing.total_clusters == 2
+    assert [item.cluster_id for item in briefing.topics["国际政治"]] == ["cluster-3", "cluster-2"]
+
+
 def test_build_final_briefing_raises_on_unknown_cluster_id(sample_config) -> None:
     """Unknown cluster ids from the model should raise a clear error."""
 

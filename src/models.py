@@ -13,6 +13,8 @@ class FeedConfig:
 
     url: str
     category: str
+    exclude_keywords: list[str] = field(default_factory=list)
+    exclude_categories: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -30,6 +32,7 @@ class PipelineConfig:
 
     max_articles_per_source: int
     total_articles_for_summary: int
+    importance_threshold: int
     dedup_similarity_threshold: float
     language: str
     briefing_style: str

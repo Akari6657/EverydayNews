@@ -114,7 +114,7 @@ def _cluster_articles(
             )
         except Exception as exc:
             LOGGER.warning("Embedding dedup failed, falling back to difflib: %s", exc)
-    return _dedup_difflib(articles, config, priorities)
+    return _dedup_difflib(articles, config, priorities, reference_time)
 
 
 def _dedup_embedding(
@@ -141,13 +141,14 @@ def _dedup_embedding(
         clusters = _cluster_with_dbscan(ordered, embeddings, config, priorities)
     else:
         clusters = _cluster_with_greedy(ordered, embeddings, config)
-    return _sort_clusters(clusters, priorities)
+    return _sort_clusters(clusters, priorities, reference_time)
 
 
 def _dedup_difflib(
     articles: list[Article],
     config: AppConfig,
     priorities: dict[str, int],
+    reference_time: datetime,
 ) -> list[ArticleCluster]:
     """Cluster articles by lexical title similarity as a fallback."""
 
@@ -162,7 +163,7 @@ def _dedup_difflib(
             normalized_titles.append(normalized)
             continue
         clusters[best_index].add_duplicate(article)
-    return _sort_clusters(clusters, priorities)
+    return _sort_clusters(clusters, priorities, reference_time)
 
 
 def _best_difflib_cluster(
@@ -303,17 +304,34 @@ def _sort_articles_for_clustering(
 def _sort_clusters(
     clusters: list[ArticleCluster],
     priorities: dict[str, int],
+    reference_time: datetime,
 ) -> list[ArticleCluster]:
     """Sort clusters by coverage first, then source priority and recency."""
 
     return sorted(
         clusters,
         key=lambda cluster: (
-            -cluster.source_count,
+            -_cluster_priority(cluster, reference_time),
             _priority(cluster.primary, priorities),
             -cluster.primary.published.timestamp(),
         ),
     )
+
+
+def _cluster_priority(cluster: ArticleCluster, reference_time: datetime) -> float:
+    """Compute a priority score that boosts cross-source coverage."""
+
+    frequency_score = min(cluster.source_count / 3.0, 1.0) * 0.6
+    recency_score = _recency_factor(cluster.primary.published, reference_time) * 0.4
+    return frequency_score + recency_score
+
+
+def _recency_factor(published: datetime, reference_time: datetime) -> float:
+    """Return a 0-1 recency score within the 24-hour fetch window."""
+
+    age_seconds = max(0.0, (reference_time - published).total_seconds())
+    window_seconds = 24 * 60 * 60
+    return max(0.0, 1.0 - min(age_seconds, window_seconds) / window_seconds)
 
 
 def _make_cluster(article: Article) -> ArticleCluster:

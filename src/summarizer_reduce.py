@@ -51,8 +51,13 @@ def build_final_briefing(
 def _select_summaries(summaries: list[ClusterSummary], config: AppConfig) -> list[ClusterSummary]:
     """Select the top summaries that should participate in reduce."""
 
+    filtered = [
+        summary
+        for summary in summaries
+        if summary.importance >= config.pipeline.importance_threshold
+    ]
     ranked = sorted(
-        summaries,
+        filtered,
         key=lambda summary: (
             -summary.importance,
             -len(summary.source_names),

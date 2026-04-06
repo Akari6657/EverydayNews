@@ -4,32 +4,45 @@ sources:
     feeds:
       - url: "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml"
         category: "homepage"
+        exclude_keywords: ["here's the latest", "live updates"]
+        exclude_categories: ["Opinion"]
       - url: "https://rss.nytimes.com/services/xml/rss/nyt/World.xml"
         category: "world"
+        exclude_keywords: ["here's the latest", "live updates"]
+        exclude_categories: ["Opinion"]
 
   - name: "BBC News"
     slug: "bbc"
     feeds:
       - url: "http://feeds.bbci.co.uk/news/rss.xml"
         category: "top"
+        exclude_keywords: ["live:", "weather", "football", "horse racing"]
+        exclude_categories: ["Sport", "Weather", "Entertainment"]
 
   - name: "The Guardian"
     slug: "guardian"
     feeds:
       - url: "https://www.theguardian.com/world/rss"
         category: "world"
+        exclude_keywords: ["live:", "as it happened", "football"]
+        exclude_categories: ["Sport", "Football"]
       - url: "https://www.theguardian.com/uk/rss"
         category: "uk"
+        exclude_keywords: ["live:", "as it happened", "football"]
+        exclude_categories: ["Sport", "Football"]
 
   - name: "New York Post"
     slug: "nyp"
     feeds:
       - url: "https://nypost.com/feed/"
         category: "top"
+        exclude_keywords: ["celebrity", "gossip", "page six", "reality tv", "dating", "royals"]
+        exclude_categories: ["Entertainment", "Page Six", "Sports"]
 
 pipeline:
   max_articles_per_source: 15
   total_articles_for_summary: 30
+  importance_threshold: 5
   dedup_similarity_threshold: 0.7
   language: "zh-CN"
   briefing_style: "concise"
@@ -46,7 +59,7 @@ summarizer:
     batch_size: 5
     max_retries: 2
   reduce:
-    top_k: 30
+    top_k: 15
     max_retries: 2
 
 llm:

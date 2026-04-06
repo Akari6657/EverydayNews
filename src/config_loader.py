@@ -114,7 +114,15 @@ def _parse_source(raw_source: dict[str, Any]) -> SourceConfig:
     raw_feeds = _require_mapping_list(raw_source, "feeds")
     if not raw_feeds:
         raise ConfigError(f"Source '{slug}' must define at least one feed")
-    feeds = [FeedConfig(_require_string(feed, "url"), _require_string(feed, "category")) for feed in raw_feeds]
+    feeds = [
+        FeedConfig(
+            url=_require_string(feed, "url"),
+            category=_require_string(feed, "category"),
+            exclude_keywords=_optional_string_list(feed, "exclude_keywords"),
+            exclude_categories=_optional_string_list(feed, "exclude_categories"),
+        )
+        for feed in raw_feeds
+    ]
     return SourceConfig(name=name, slug=slug, feeds=feeds)
 
 
@@ -125,6 +133,13 @@ def _parse_pipeline(payload: dict[str, Any]) -> PipelineConfig:
     return PipelineConfig(
         max_articles_per_source=_require_int(section, "max_articles_per_source"),
         total_articles_for_summary=_require_int(section, "total_articles_for_summary"),
+        importance_threshold=_bounded_int_with_default(
+            section,
+            "importance_threshold",
+            default=4,
+            minimum=0,
+            maximum=10,
+        ),
         dedup_similarity_threshold=_require_float(section, "dedup_similarity_threshold"),
         language=_require_string(section, "language"),
         briefing_style=_require_string(section, "briefing_style"),
@@ -331,6 +346,14 @@ def _require_string_list(payload: dict[str, Any], key: str) -> list[str]:
     return [item.strip() for item in value if item.strip()]
 
 
+def _optional_string_list(payload: dict[str, Any], key: str) -> list[str]:
+    """Return an optional list of strings, defaulting to an empty list."""
+
+    if key not in payload:
+        return []
+    return _require_string_list(payload, key)
+
+
 def _require_int(payload: dict[str, Any], key: str) -> int:
     """Require an integer value."""
 
@@ -371,6 +394,23 @@ def _positive_int(value: Any, key: str) -> int:
 
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ConfigError(f"'{key}' must be a positive integer")
+    return value
+
+
+def _bounded_int_with_default(
+    payload: dict[str, Any],
+    key: str,
+    default: int,
+    minimum: int,
+    maximum: int,
+) -> int:
+    """Require an integer within a closed range when present, else use a default."""
+
+    if key not in payload:
+        return default
+    value = _require_int(payload, key)
+    if value < minimum or value > maximum:
+        raise ConfigError(f"'{key}' must be between {minimum} and {maximum}")
     return value
 
 
