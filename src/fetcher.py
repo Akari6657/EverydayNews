@@ -5,6 +5,7 @@ from __future__ import annotations
 import calendar
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from html import unescape
@@ -14,6 +15,7 @@ from .models import AppConfig, Article, FeedConfig, SourceConfig
 
 LOGGER = logging.getLogger(__name__)
 FETCH_TIMEOUT_SECONDS = 10
+MAX_FETCH_WORKERS = 8
 HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 
@@ -24,24 +26,47 @@ def fetch_all_feeds(
     """Fetch articles from every configured source."""
 
     reference_time = now or datetime.now(timezone.utc)
+    articles_by_source = _fetch_articles_by_source(config, reference_time)
     articles: list[Article] = []
     for source in config.sources:
-        articles.extend(_fetch_source_articles(source, config, reference_time))
+        source_articles = _cap_source_articles(
+            articles_by_source.get(source.slug, []),
+            config.pipeline.max_articles_per_source,
+        )
+        articles.extend(source_articles)
     return sorted(articles, key=lambda article: article.published, reverse=True)
 
 
-def _fetch_source_articles(
-    source: SourceConfig,
+def _fetch_articles_by_source(
     config: AppConfig,
     reference_time: datetime,
-) -> list[Article]:
-    """Fetch and cap articles for a single source."""
+) -> dict[str, list[Article]]:
+    """Fetch all feeds concurrently and group results by source slug."""
 
-    articles: list[Article] = []
-    for feed in source.feeds:
-        articles.extend(_fetch_feed_articles(source, feed, reference_time))
+    articles_by_source = {source.slug: [] for source in config.sources}
+    with ThreadPoolExecutor(max_workers=MAX_FETCH_WORKERS) as executor:
+        futures = {
+            executor.submit(_fetch_feed_articles, source, feed, reference_time): (source.slug, feed.url)
+            for source in config.sources
+            for feed in source.feeds
+        }
+        for future in as_completed(futures):
+            source_slug, feed_url = futures[future]
+            try:
+                articles_by_source[source_slug].extend(future.result())
+            except Exception as exc:
+                LOGGER.warning("Failed to fetch feed %s: %s", feed_url, exc)
+    return articles_by_source
+
+
+def _cap_source_articles(
+    articles: list[Article],
+    max_articles_per_source: int,
+) -> list[Article]:
+    """Sort and cap articles for one source."""
+
     articles.sort(key=lambda article: article.published, reverse=True)
-    return articles[: config.pipeline.max_articles_per_source]
+    return articles[:max_articles_per_source]
 
 
 def _fetch_feed_articles(
