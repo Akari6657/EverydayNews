@@ -44,4 +44,3 @@ Recommended approach:
 ## Scheduling
 
 - Local scheduling: `python -m src.main --schedule`
-- GitHub Actions: use `.github/workflows/daily-briefing.yml`

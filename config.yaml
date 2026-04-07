@@ -4,15 +4,18 @@ sources:
     feeds:
       - url: "https://rss.nytimes.com/services/xml/rss/nyt/World.xml"
         category: "world"
-        exclude_keywords: ["here's the latest", "live updates"]
+        exclude_keywords:
+          ["here's the latest", "live updates", "mapping the scale", "tell us here", "what we know", "dies at", "dies aged"]
         exclude_categories: ["Opinion"]
       - url: "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml"
         category: "business"
-        exclude_keywords: ["here's the latest", "live updates"]
+        exclude_keywords:
+          ["here's the latest", "live updates", "mapping the scale", "tell us here", "what we know", "dies at", "dies aged"]
         exclude_categories: ["Opinion"]
       - url: "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml"
         category: "technology"
-        exclude_keywords: ["here's the latest", "live updates"]
+        exclude_keywords:
+          ["here's the latest", "live updates", "mapping the scale", "tell us here", "what we know", "dies at", "dies aged"]
         exclude_categories: ["Opinion"]
 
   - name: "BBC News"
@@ -20,11 +23,13 @@ sources:
     feeds:
       - url: "http://feeds.bbci.co.uk/news/world/rss.xml"
         category: "world"
-        exclude_keywords: ["live:", "weather", "football", "horse racing"]
+        exclude_keywords:
+          ["live:", "weather", "football", "horse racing", "dies aged", "critical condition", "stabbing", "search for mother"]
         exclude_categories: ["Sport", "Weather", "Entertainment"]
       - url: "http://feeds.bbci.co.uk/news/business/rss.xml"
         category: "business"
-        exclude_keywords: ["live:", "weather", "football", "horse racing"]
+        exclude_keywords:
+          ["live:", "weather", "football", "horse racing", "dies aged", "critical condition", "stabbing"]
         exclude_categories: ["Sport", "Weather", "Entertainment"]
 
   - name: "The Guardian"
@@ -32,7 +37,8 @@ sources:
     feeds:
       - url: "https://www.theguardian.com/world/rss"
         category: "world"
-        exclude_keywords: ["live:", "as it happened", "football"]
+        exclude_keywords:
+          ["live:", "as it happened", "football", "dies aged", "critical condition", "stabbing", "family demands answers", "after death of"]
         exclude_categories: ["Sport", "Football"]
 
   - name: "Al Jazeera English"
@@ -40,7 +46,7 @@ sources:
     feeds:
       - url: "https://www.aljazeera.com/xml/rss/all.xml"
         category: "top"
-        exclude_keywords: ["live:"]
+        exclude_keywords: ["live:", "analysis", "explainer"]
         exclude_categories: ["Sport"]
 
   - name: "Deutsche Welle"
@@ -48,7 +54,7 @@ sources:
     feeds:
       - url: "https://rss.dw.com/xml/rss-en-all"
         category: "top"
-        exclude_keywords: ["live:"]
+        exclude_keywords: ["live:", "analysis", "explainer"]
 
   - name: "NPR"
     slug: "npr"
@@ -69,7 +75,7 @@ pipeline:
 dedup:
   method: "embedding"
   model: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-  similarity_threshold: 0.75
+  similarity_threshold: 0.72
   clustering_algorithm: "greedy"
   cache_embeddings: true
 
