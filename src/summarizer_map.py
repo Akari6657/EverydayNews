@@ -37,18 +37,75 @@ def summarize_clusters_with_usage(
             summaries=[],
             token_usage={"input_tokens": 0, "output_tokens": 0},
             model=config.llm.model,
+            batches_total=0,
+            batches_failed=0,
+            clusters_skipped=0,
         )
     llm_client = client or _create_client(config)
     summaries: list[ClusterSummary] = []
     token_usage = {"input_tokens": 0, "output_tokens": 0}
     model = config.llm.model
+    batches_total = 0
+    batches_failed = 0
+    clusters_skipped = 0
     for batch in _chunked(clusters, config.summarizer.map.batch_size):
-        batch_summaries, batch_usage, batch_model = _summarize_batch(batch, config, llm_client)
+        (
+            batch_summaries,
+            batch_usage,
+            batch_model,
+            batch_attempts,
+            batch_failures,
+            batch_skipped,
+        ) = _summarize_batch_resilient(batch, config, llm_client)
         summaries.extend(batch_summaries)
         token_usage = _merge_token_usage(token_usage, batch_usage)
+        batches_total += batch_attempts
+        batches_failed += batch_failures
+        clusters_skipped += batch_skipped
         if batch_model:
             model = batch_model
-    return MapSummariesResult(summaries=summaries, token_usage=token_usage, model=model)
+    return MapSummariesResult(
+        summaries=summaries,
+        token_usage=token_usage,
+        model=model,
+        batches_total=batches_total,
+        batches_failed=batches_failed,
+        clusters_skipped=clusters_skipped,
+    )
+
+
+def _summarize_batch_resilient(
+    clusters: list[ArticleCluster],
+    config: AppConfig,
+    client: Any,
+) -> tuple[list[ClusterSummary], dict[str, int], str | None, int, int, int]:
+    """Summarize a batch, splitting it into smaller pieces when it fails."""
+
+    batch_summaries, batch_usage, batch_model = _summarize_batch(clusters, config, client)
+    if len(batch_summaries) == len(clusters):
+        return batch_summaries, batch_usage, batch_model, 1, 0, 0
+    if len(clusters) == 1:
+        return batch_summaries, batch_usage, batch_model, 1, 1, 1
+
+    midpoint = max(1, len(clusters) // 2)
+    LOGGER.warning(
+        "Map-stage batch failed for %s clusters; retrying as smaller batches (%s + %s)",
+        len(clusters),
+        midpoint,
+        len(clusters) - midpoint,
+    )
+    left = _summarize_batch_resilient(clusters[:midpoint], config, client)
+    right = _summarize_batch_resilient(clusters[midpoint:], config, client)
+    merged_usage = _merge_token_usage(batch_usage, _merge_token_usage(left[1], right[1]))
+    merged_model = right[2] or left[2] or batch_model
+    return (
+        left[0] + right[0],
+        merged_usage,
+        merged_model,
+        1 + left[3] + right[3],
+        1 + left[4] + right[4],
+        left[5] + right[5],
+    )
 
 
 def _summarize_batch(
@@ -75,7 +132,7 @@ def _summarize_batch(
         token_usage = _merge_token_usage(token_usage, _response_token_usage(response))
         raw_text = _extract_response_text(response)
         try:
-            payload = json.loads(raw_text)
+            payload = _load_json_payload(raw_text)
             items = _extract_items(payload)
             if len(items) != len(clusters):
                 raise ValueError(
@@ -152,6 +209,33 @@ def _extract_items(payload: Any) -> list[dict[str, Any]]:
     if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
         raise TypeError("Map-stage JSON payload must contain a list of objects")
     return items
+
+
+def _load_json_payload(raw_text: str) -> Any:
+    """Load JSON, tolerating fenced blocks or surrounding text."""
+
+    stripped = raw_text.strip()
+    candidates = [stripped]
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if len(lines) >= 3:
+            candidates.append("\n".join(lines[1:-1]).strip())
+    for opening, closing in (("{", "}"), ("[", "]")):
+        start = stripped.find(opening)
+        end = stripped.rfind(closing)
+        if start != -1 and end != -1 and end > start:
+            candidates.append(stripped[start : end + 1].strip())
+    last_error: json.JSONDecodeError | None = None
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    raise json.JSONDecodeError("No JSON content found", raw_text, 0)
 
 
 def _parse_cluster_summary(item: dict[str, Any], cluster: ArticleCluster) -> ClusterSummary:

@@ -87,6 +87,10 @@ summarizer:
     top_k: 15
     max_retries: 2
 
+evaluation:
+  enabled: true
+  max_retries: 2
+
 llm:
   provider: "deepseek"
   model: "deepseek-chat"

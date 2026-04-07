@@ -188,3 +188,73 @@ def test_summarize_clusters_with_usage_aggregates_batch_tokens(sample_config, ma
     assert len(result.summaries) == 6
     assert result.token_usage == {"input_tokens": 222, "output_tokens": 444}
     assert result.model == "deepseek-chat"
+    assert result.batches_total == 2
+    assert result.batches_failed == 0
+    assert result.clusters_skipped == 0
+
+
+def test_summarize_clusters_with_usage_tracks_skipped_batches(sample_config, make_cluster, monkeypatch) -> None:
+    """Map-stage usage helper should expose skipped clusters when a batch fails."""
+
+    monkeypatch.setattr("src.summarizer_map.time.sleep", lambda _: None)
+    client = FakeClient(
+        [
+            FakeResponse(choices=[FakeChoice(FakeMessage("not-json"))]),
+            FakeResponse(choices=[FakeChoice(FakeMessage("still-not-json"))]),
+        ]
+    )
+
+    result = summarize_clusters_with_usage([make_cluster()], sample_config, client=client)
+
+    assert result.summaries == []
+    assert result.batches_total == 1
+    assert result.batches_failed == 1
+    assert result.clusters_skipped == 1
+
+
+def test_summarize_clusters_with_usage_splits_failed_batch(sample_config, make_cluster, monkeypatch) -> None:
+    """A failed multi-cluster batch should be retried as smaller batches instead of being dropped."""
+
+    monkeypatch.setattr("src.summarizer_map.time.sleep", lambda _: None)
+    config = replace(
+        sample_config,
+        summarizer=replace(
+            sample_config.summarizer,
+            map=replace(sample_config.summarizer.map, batch_size=2, max_retries=1),
+        ),
+    )
+    clusters = [make_cluster(cluster_id="cluster-1"), make_cluster(cluster_id="cluster-2")]
+    client = FakeClient(
+        [
+            FakeResponse(
+                choices=[
+                    FakeChoice(
+                        FakeMessage(
+                            json.dumps(
+                                {
+                                    "items": [
+                                        {
+                                            "topic": "国际政治",
+                                            "headline_zh": "只有一条",
+                                            "summary_zh": "触发拆分重试。",
+                                            "importance": 8,
+                                            "entities": ["伊朗"],
+                                        }
+                                    ]
+                                },
+                                ensure_ascii=False,
+                            )
+                        )
+                    )
+                ]
+            ),
+            _response_for_batch(1),
+            _response_for_batch(1),
+        ]
+    )
+
+    result = summarize_clusters_with_usage(clusters, config, client=client)
+
+    assert len(result.summaries) == 2
+    assert result.batches_failed == 1
+    assert result.clusters_skipped == 0

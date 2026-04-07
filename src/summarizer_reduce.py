@@ -13,6 +13,7 @@ from typing import Any
 from .models import AppConfig, ClusterSummary, FinalBriefing
 from .prompts import (
     REDUCE_JSON_RETRY_SUFFIX,
+    REDUCE_SAFE_USER_PROMPT_TEMPLATE,
     REDUCE_SYSTEM_PROMPT,
     REDUCE_USER_PROMPT_TEMPLATE,
 )
@@ -38,15 +39,28 @@ def build_final_briefing(
     prompt = REDUCE_USER_PROMPT_TEMPLATE.format(
         summaries_payload=_build_summaries_payload(selected)
     )
-    payload, response = _request_reduce_payload(llm_client, config, prompt)
-    return _parse_final_briefing(
-        payload=payload,
-        selected=selected,
-        config=config,
-        response=response,
-        generated_at=generated_at,
-        prior_token_usage=token_usage,
+    safe_prompt = REDUCE_SAFE_USER_PROMPT_TEMPLATE.format(
+        summaries_payload=_build_safe_summaries_payload(selected)
     )
+    try:
+        payload, response = _request_reduce_payload(llm_client, config, prompt, safe_prompt=safe_prompt)
+        return _parse_final_briefing(
+            payload=payload,
+            selected=selected,
+            config=config,
+            response=response,
+            generated_at=generated_at,
+            prior_token_usage=token_usage,
+        )
+    except Exception as exc:
+        LOGGER.warning("Reduce-stage failed; falling back to local briefing assembly: %s", exc)
+        return _fallback_briefing(selected, config, generated_at, token_usage)
+
+
+def count_reduce_candidates(summaries: list[ClusterSummary], config: AppConfig) -> int:
+    """Return how many summaries survive reduce-stage prefiltering."""
+
+    return len(_select_summaries(summaries, config))
 
 
 def _select_summaries(summaries: list[ClusterSummary], config: AppConfig) -> list[ClusterSummary]:
@@ -95,6 +109,12 @@ def _build_summaries_payload(summaries: list[ClusterSummary]) -> str:
     return "\n".join(_summary_block(summary) for summary in summaries)
 
 
+def _build_safe_summaries_payload(summaries: list[ClusterSummary]) -> str:
+    """Render a minimal payload for safer reduce retries."""
+
+    return "\n".join(_safe_summary_block(summary) for summary in summaries)
+
+
 def _summary_block(summary: ClusterSummary) -> str:
     """Render one map-stage summary block for the model prompt."""
 
@@ -112,15 +132,41 @@ def _summary_block(summary: ClusterSummary) -> str:
     return "\n".join(lines)
 
 
-def _request_reduce_payload(client: Any, config: AppConfig, prompt: str) -> tuple[dict[str, Any], Any]:
+def _safe_summary_block(summary: ClusterSummary) -> str:
+    """Render a reduced-risk block for fallback reduce prompts."""
+
+    lines = [
+        f"[cluster_id: {summary.cluster_id}]",
+        f"主题: {summary.topic}",
+        f"中文标题: {summary.headline_zh}",
+        f"重要性: {summary.importance}/10",
+        f"来源数: {len(summary.source_names)}",
+        "---",
+    ]
+    return "\n".join(lines)
+
+
+def _request_reduce_payload(
+    client: Any,
+    config: AppConfig,
+    prompt: str,
+    safe_prompt: str | None = None,
+) -> tuple[dict[str, Any], Any]:
     """Request reduce-stage JSON, retrying when invalid."""
 
     max_retries = config.summarizer.reduce.max_retries
     current_prompt = prompt
+    used_safe_prompt = False
     for attempt in range(max_retries):
         try:
             response = _request_reduce(client, config, current_prompt)
         except Exception as exc:
+            if safe_prompt and not used_safe_prompt and _is_content_risk_error(exc):
+                LOGGER.warning("Reduce-stage hit content risk; retrying with safer prompt")
+                current_prompt = safe_prompt
+                used_safe_prompt = True
+                time.sleep(2**attempt)
+                continue
             if attempt == max_retries - 1:
                 raise RuntimeError("Failed to request reduce-stage summary after retries") from exc
             LOGGER.warning("Reduce-stage request attempt %s failed: %s", attempt + 1, exc)
@@ -128,7 +174,7 @@ def _request_reduce_payload(client: Any, config: AppConfig, prompt: str) -> tupl
             continue
         raw_text = _extract_response_text(response)
         try:
-            payload = json.loads(raw_text)
+            payload = _load_json_payload(raw_text)
             if not isinstance(payload, dict):
                 raise TypeError("Reduce-stage JSON payload must be an object")
             return payload, response
@@ -154,6 +200,62 @@ def _request_reduce(client: Any, config: AppConfig, prompt: str) -> Any:
             {"role": "user", "content": prompt},
         ],
     )
+
+
+def _fallback_briefing(
+    selected: list[ClusterSummary],
+    config: AppConfig,
+    generated_at: datetime,
+    prior_token_usage: dict[str, int] | None,
+) -> FinalBriefing:
+    """Assemble a deterministic local briefing when reduce LLM calls fail."""
+
+    topics: dict[str, list[ClusterSummary]] = {}
+    for summary in selected:
+        topics.setdefault(summary.topic, []).append(summary)
+    for topic_name, items in list(topics.items()):
+        ranked = sorted(
+            items,
+            key=lambda item: (-item.importance, -len(item.source_names), item.cluster_id),
+        )
+        topics[topic_name] = ranked[: config.pipeline.max_items_per_topic]
+    displayed = [summary for items in topics.values() for summary in items]
+    return FinalBriefing(
+        date=generated_at.astimezone(timezone.utc).strftime("%Y-%m-%d"),
+        overview_zh=_fallback_overview(topics),
+        topics=topics,
+        total_clusters=len(displayed),
+        total_sources=len({name for summary in displayed for name in summary.source_names}),
+        generated_at=generated_at,
+        token_usage=_merge_token_usage(prior_token_usage, {"input_tokens": 0, "output_tokens": 0}),
+        model=f"{config.llm.model} (fallback)",
+    )
+
+
+def _fallback_overview(topics: dict[str, list[ClusterSummary]]) -> str:
+    """Generate a simple Chinese overview without an extra LLM call."""
+
+    if not topics:
+        return "今日暂无新的头条新闻。"
+    topic_parts = [
+        f"{topic_name}（{len(items)}条）"
+        for topic_name, items in sorted(
+            topics.items(),
+            key=lambda item: (-len(item[1]), -max(summary.importance for summary in item[1]), item[0]),
+        )[:3]
+    ]
+    headline_parts = [
+        items[0].headline_zh
+        for _, items in sorted(
+            topics.items(),
+            key=lambda item: (-len(item[1]), -max(summary.importance for summary in item[1]), item[0]),
+        )
+        if items
+    ][:3]
+    overview = f"今日简报重点涵盖{'、'.join(topic_parts)}。"
+    if headline_parts:
+        overview += f"主要关注事件包括{'、'.join(headline_parts)}。"
+    return overview
 
 
 def _parse_final_briefing(
@@ -203,6 +305,38 @@ def _parse_final_briefing(
         token_usage=usage,
         model=str(getattr(response, "model", config.llm.model)),
     )
+
+
+def _load_json_payload(raw_text: str) -> Any:
+    """Load JSON, tolerating fenced blocks or surrounding text."""
+
+    stripped = raw_text.strip()
+    candidates = [stripped]
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if len(lines) >= 3:
+            candidates.append("\n".join(lines[1:-1]).strip())
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidates.append(stripped[start : end + 1].strip())
+    last_error: json.JSONDecodeError | None = None
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    raise json.JSONDecodeError("No JSON content found", raw_text, 0)
+
+
+def _is_content_risk_error(exc: Exception) -> bool:
+    """Return whether a request failure matches DeepSeek content-risk blocking."""
+
+    return "Content Exists Risk" in str(exc)
 
 
 def _parse_topic_item(

@@ -151,6 +151,28 @@ def test_build_final_briefing_retries_invalid_json(sample_config, monkeypatch) -
     assert briefing.topics["国际政治"][0].cluster_id == "cluster-1"
 
 
+def test_build_final_briefing_falls_back_after_content_risk(sample_config) -> None:
+    """Content-risk request failures should fall back to deterministic local assembly."""
+
+    summaries = [
+        _summary("cluster-1", topic="国际政治", importance=9),
+        _summary("cluster-2", topic="经济金融", importance=7),
+    ]
+    client = FakeClient(
+        [
+            RuntimeError("Error code: 400 - Content Exists Risk"),
+            RuntimeError("Error code: 400 - Content Exists Risk"),
+        ]
+    )
+
+    briefing = build_final_briefing(summaries, sample_config, client=client)
+
+    assert briefing.model.endswith("(fallback)")
+    assert briefing.total_clusters == 2
+    assert "今日简报重点涵盖" in briefing.overview_zh
+    assert list(briefing.topics) == ["国际政治", "经济金融"]
+
+
 def test_build_final_briefing_appends_missing_clusters(sample_config) -> None:
     """Omitted clusters should be appended back under their original topics."""
 
@@ -311,8 +333,8 @@ def test_build_final_briefing_trims_each_topic_to_limit(sample_config) -> None:
     assert [item.cluster_id for item in briefing.topics["国际政治"]] == ["cluster-1", "cluster-2"]
 
 
-def test_build_final_briefing_raises_on_unknown_cluster_id(sample_config) -> None:
-    """Unknown cluster ids from the model should raise a clear error."""
+def test_build_final_briefing_falls_back_on_unknown_cluster_id(sample_config) -> None:
+    """Unknown cluster ids from the model should trigger local fallback assembly."""
 
     response = FakeResponse(
         choices=[
@@ -331,8 +353,11 @@ def test_build_final_briefing_raises_on_unknown_cluster_id(sample_config) -> Non
     )
     client = FakeClient([response])
 
-    with pytest.raises(ValueError):
-        build_final_briefing([_summary("cluster-1")], sample_config, client=client)
+    briefing = build_final_briefing([_summary("cluster-1")], sample_config, client=client)
+
+    assert briefing.model.endswith("(fallback)")
+    assert briefing.total_clusters == 1
+    assert briefing.topics["国际政治"][0].cluster_id == "cluster-1"
 
 
 def test_build_final_briefing_still_accepts_object_items(sample_config) -> None:

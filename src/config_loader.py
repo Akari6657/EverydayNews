@@ -10,6 +10,7 @@ from .models import (
     AppConfig,
     DedupConfig,
     EmailOutputConfig,
+    EvaluationConfig,
     FeedConfig,
     JsonOutputConfig,
     LLMConfig,
@@ -51,6 +52,7 @@ def get_config(
         schedule=_parse_schedule(payload),
         root_dir=root_dir,
         config_path=config_file,
+        evaluation=_parse_evaluation(payload),
     )
 
 
@@ -301,6 +303,20 @@ def _parse_schedule(payload: dict[str, Any]) -> ScheduleConfig:
     return ScheduleConfig(
         timezone=_require_string(section, "timezone"),
         run_at=_require_string(section, "run_at"),
+    )
+
+
+def _parse_evaluation(payload: dict[str, Any]) -> EvaluationConfig:
+    """Parse optional evaluation settings with conservative defaults."""
+
+    section = payload.get("evaluation")
+    if section is None:
+        return EvaluationConfig(enabled=False, max_retries=2)
+    if not isinstance(section, dict):
+        raise ConfigError("'evaluation' must be a mapping")
+    return EvaluationConfig(
+        enabled=_require_bool_with_default(section, "enabled", False),
+        max_retries=_positive_int(section.get("max_retries", 2), "evaluation.max_retries"),
     )
 
 

@@ -70,6 +70,8 @@ schedule:
     assert config.output.markdown.group_by_month is True
     assert config.output.json.directory == "output/json"
     assert config.output.json.group_by_month is True
+    assert config.evaluation.enabled is False
+    assert config.evaluation.max_retries == 2
     assert config.root_dir == tmp_path
 
 
@@ -81,3 +83,58 @@ def test_get_config_rejects_missing_sources(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigError):
         get_config(config_path=config_path, env_path=tmp_path / ".env")
+
+
+def test_get_config_parses_evaluation_section(tmp_path: Path) -> None:
+    """Config loader should parse optional evaluation settings."""
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+sources:
+  - name: Example
+    slug: example
+    feeds:
+      - url: https://example.com/rss.xml
+        category: top
+pipeline:
+  max_articles_per_source: 10
+  total_articles_for_summary: 20
+  dedup_similarity_threshold: 0.7
+  language: zh-CN
+  briefing_style: concise
+llm:
+  provider: deepseek
+  model: deepseek-chat
+  base_url: https://api.deepseek.com
+  api_key_env: DEEPSEEK_API_KEY
+  max_tokens: 4096
+  temperature: 0.3
+output:
+  markdown:
+    enabled: true
+    directory: output/md
+  email:
+    enabled: false
+    smtp_host: ""
+    smtp_port: 587
+    sender: ""
+    recipients: []
+  telegram:
+    enabled: false
+    bot_token_env: TELEGRAM_BOT_TOKEN
+    chat_id_env: TELEGRAM_CHAT_ID
+schedule:
+  timezone: Asia/Shanghai
+  run_at: "08:00"
+evaluation:
+  enabled: true
+  max_retries: 3
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = get_config(config_path=config_path, env_path=tmp_path / ".env")
+
+    assert config.evaluation.enabled is True
+    assert config.evaluation.max_retries == 3
