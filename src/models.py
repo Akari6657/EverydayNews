@@ -227,6 +227,17 @@ class ArticleCluster:
 
 
 @dataclass(frozen=True)
+class DedupDiagnostics:
+    """Dry-run diagnostics describing the pre-LLM clustering stage."""
+
+    seen_filtered: int
+    fresh_articles: int
+    clusters_before_limit: int
+    clusters_after_limit: int
+    multi_source_clusters: int
+
+
+@dataclass(frozen=True)
 class ClusterSummary:
     """Map-stage summary for a single deduplicated event cluster."""
 

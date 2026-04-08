@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter, defaultdict
 import logging
 from time import perf_counter
 from typing import Sequence
 
 from .config_loader import get_config
-from .dedup import deduplicate
+from .dedup import deduplicate, deduplicate_with_diagnostics
 from .evaluator import append_run_metrics, evaluate_briefing, write_evaluation_result
 from .fetcher import fetch_all_feeds
 from .formatter import format_briefing
-from .models import ArticleCluster, RunMetrics
+from .models import AppConfig, Article, ArticleCluster, DedupDiagnostics, RunMetrics
 from .notifier import notify
 from .summarizer_map import summarize_clusters_with_usage
 from .summarizer_reduce import build_final_briefing, count_reduce_candidates
@@ -40,9 +41,15 @@ def run_pipeline(config_path: str = "config.yaml", dry_run: bool = False):
         articles = fetch_all_feeds(config)
         LOGGER.info("Fetched %s articles", len(articles))
         current_stage = "dedup"
-        clusters = deduplicate(articles, config)
+        if dry_run:
+            clusters, dedup_diagnostics = deduplicate_with_diagnostics(articles, config)
+        else:
+            dedup_diagnostics = None
+            clusters = deduplicate(articles, config)
         LOGGER.info("After dedup: %s clusters", len(clusters))
         if dry_run:
+            _log_dry_run_fetch_overview(config, articles)
+            _log_dry_run_dedup_overview(config, dedup_diagnostics, clusters)
             _log_dry_run_clusters(clusters)
             return clusters
         current_stage = "map"
@@ -148,12 +155,90 @@ def _log_dry_run_clusters(clusters: list[ArticleCluster]) -> None:
     for index, cluster in enumerate(clusters, start=1):
         published = cluster.primary.published.strftime("%Y-%m-%d %H:%M UTC")
         LOGGER.info(
-            "[%s] %s 家来源 | %s | %s | %s",
+            "[%s] %s source(s) | %s article(s) | primary=%s/%s | %s | %s",
             index,
             cluster.source_count,
+            len(cluster.all_articles),
             cluster.primary.source_name,
+            cluster.primary.category,
             published,
             cluster.primary.title,
+        )
+        LOGGER.info("    sources: %s", " / ".join(cluster.source_names))
+        for position, article in enumerate(cluster.all_articles, start=1):
+            marker = "*" if position == 1 else "-"
+            LOGGER.info(
+                "    %s %s/%s | %s",
+                marker,
+                article.source_name,
+                article.category,
+                article.title,
+            )
+
+
+def _log_dry_run_fetch_overview(config: AppConfig, articles: list[Article]) -> None:
+    """Log how many post-filter articles each configured source contributed."""
+
+    total_feeds = sum(len(source.feeds) for source in config.sources)
+    LOGGER.info(
+        "Dry-run fetch overview | sources=%s | feeds=%s | retained_articles=%s | max_articles_per_source=%s",
+        len(config.sources),
+        total_feeds,
+        len(articles),
+        config.pipeline.max_articles_per_source,
+    )
+    counts_by_source = Counter(article.source_slug for article in articles)
+    categories_by_source: dict[str, Counter[str]] = defaultdict(Counter)
+    latest_by_source: dict[str, Article] = {}
+    for article in articles:
+        categories_by_source[article.source_slug][article.category] += 1
+        current_latest = latest_by_source.get(article.source_slug)
+        if current_latest is None or article.published > current_latest.published:
+            latest_by_source[article.source_slug] = article
+    for source in config.sources:
+        category_counts = categories_by_source.get(source.slug, Counter())
+        category_summary = ", ".join(
+            f"{category}={count}" for category, count in category_counts.most_common()
+        ) or "none"
+        LOGGER.info(
+            "Fetch kept | %s | articles=%s | categories=%s | latest=%s",
+            source.name,
+            counts_by_source.get(source.slug, 0),
+            category_summary,
+            latest_by_source[source.slug].published.strftime("%Y-%m-%d %H:%M UTC")
+            if source.slug in latest_by_source
+            else "n/a",
+        )
+
+
+def _log_dry_run_dedup_overview(
+    config: AppConfig,
+    diagnostics: DedupDiagnostics | None,
+    clusters: list[ArticleCluster],
+) -> None:
+    """Log how the fetched article pool collapsed into deduplicated clusters."""
+
+    if diagnostics is None:
+        return
+    represented_articles = sum(len(cluster.all_articles) for cluster in clusters)
+    LOGGER.info(
+        "Dry-run dedup overview | method=%s | similarity_threshold=%.2f | seen_filtered=%s | fresh_articles=%s | clusters_before_limit=%s | clusters_after_limit=%s | multi_source_clusters=%s | represented_articles=%s",
+        config.dedup.method,
+        config.dedup.similarity_threshold,
+        diagnostics.seen_filtered,
+        diagnostics.fresh_articles,
+        diagnostics.clusters_before_limit,
+        diagnostics.clusters_after_limit,
+        diagnostics.multi_source_clusters,
+        represented_articles,
+    )
+    truncated = diagnostics.clusters_before_limit - diagnostics.clusters_after_limit
+    if truncated > 0:
+        LOGGER.info(
+            "Dry-run dedup cap applied | kept_top_clusters=%s | truncated_clusters=%s | cap=%s",
+            diagnostics.clusters_after_limit,
+            truncated,
+            config.pipeline.total_articles_for_summary,
         )
 
 
@@ -223,6 +308,8 @@ def _configure_logging() -> None:
         level=logging.INFO,
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     )
+    for logger_name in ("httpx", "sentence_transformers", "huggingface_hub"):
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
 
 
 if __name__ == "__main__":

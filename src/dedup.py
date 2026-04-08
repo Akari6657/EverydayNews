@@ -14,7 +14,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Protocol, Sequence
 
-from .models import AppConfig, Article, ArticleCluster
+from .models import AppConfig, Article, ArticleCluster, DedupDiagnostics
 
 LOGGER = logging.getLogger(__name__)
 NON_WORD_RE = re.compile(r"[^\w\s]+")
@@ -47,6 +47,27 @@ def deduplicate(
 ) -> list[ArticleCluster]:
     """Cluster unseen articles and return canonical event groups."""
 
+    clusters, _ = deduplicate_with_diagnostics(
+        articles,
+        config,
+        cache_path=cache_path,
+        embedding_cache_path=embedding_cache_path,
+        now=now,
+        encoder=encoder,
+    )
+    return clusters
+
+
+def deduplicate_with_diagnostics(
+    articles: list[Article],
+    config: AppConfig,
+    cache_path: str | Path | None = None,
+    embedding_cache_path: str | Path | None = None,
+    now: datetime | None = None,
+    encoder: SupportsEncode | None = None,
+) -> tuple[list[ArticleCluster], DedupDiagnostics]:
+    """Return canonical event groups plus dry-run diagnostics."""
+
     reference_time = now or datetime.now(timezone.utc)
     seen_cache_file = Path(cache_path) if cache_path else config.root_dir / "cache" / SEEN_CACHE_FILENAME
     embedding_cache_file = (
@@ -68,7 +89,14 @@ def deduplicate(
     final_clusters = clusters[: config.pipeline.total_articles_for_summary]
     updated_seen_cache = _update_seen_cache(seen_cache, final_clusters, reference_time)
     _save_seen_cache(seen_cache_file, updated_seen_cache)
-    return final_clusters
+    diagnostics = DedupDiagnostics(
+        seen_filtered=len(articles) - len(fresh_articles),
+        fresh_articles=len(fresh_articles),
+        clusters_before_limit=len(clusters),
+        clusters_after_limit=len(final_clusters),
+        multi_source_clusters=sum(1 for cluster in final_clusters if cluster.source_count > 1),
+    )
+    return final_clusters, diagnostics
 
 
 def deduplicate_articles(

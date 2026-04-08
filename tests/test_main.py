@@ -9,6 +9,7 @@ from pathlib import Path
 from src import main
 from src.models import (
     ClusterSummary,
+    DedupDiagnostics,
     EvaluationConfig,
     EvaluationResult,
     FinalBriefing,
@@ -22,7 +23,20 @@ def test_run_pipeline_dry_run_skips_llm(monkeypatch, sample_config, make_article
     cluster = make_cluster(primary=make_article())
     monkeypatch.setattr(main, "get_config", lambda _: sample_config)
     monkeypatch.setattr(main, "fetch_all_feeds", lambda config: [make_article()])
-    monkeypatch.setattr(main, "deduplicate", lambda articles, config: [cluster])
+    monkeypatch.setattr(
+        main,
+        "deduplicate_with_diagnostics",
+        lambda articles, config: (
+            [cluster],
+            DedupDiagnostics(
+                seen_filtered=0,
+                fresh_articles=1,
+                clusters_before_limit=1,
+                clusters_after_limit=1,
+                multi_source_clusters=1,
+            ),
+        ),
+    )
     monkeypatch.setattr(
         main,
         "summarize_clusters_with_usage",
