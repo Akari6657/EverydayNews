@@ -7,14 +7,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from src import notifier
-from src.models import ClusterSummary, FinalBriefing
+from src.models import FinalBriefing, ThreadSummary
 
 
 def _make_briefing() -> FinalBriefing:
     """Create a minimal structured briefing for notifier tests."""
 
-    summary = ClusterSummary(
-        cluster_id="thread-1",
+    summary = ThreadSummary(
+        thread_id="thread-1",
         topic="国际政治",
         headline_zh="测试标题",
         summary_zh="测试摘要",
@@ -27,7 +27,7 @@ def _make_briefing() -> FinalBriefing:
         date="2026-04-08",
         overview_zh="今日综述。",
         topics={"国际政治": [summary]},
-        total_clusters=1,
+        total_threads=1,
         total_sources=1,
         generated_at=datetime.now(timezone.utc),
         token_usage={"input_tokens": 0, "output_tokens": 0},

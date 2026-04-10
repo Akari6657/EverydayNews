@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import pytest
 
 from src.formatter import format_briefing, render_briefing
-from src.models import ClusterSummary, FinalBriefing
+from src.models import FinalBriefing, ThreadSummary
 
 
 def _make_briefing() -> FinalBriefing:
@@ -18,8 +18,8 @@ def _make_briefing() -> FinalBriefing:
         overview_zh="今日综述。",
         topics={
             "国际政治": [
-                ClusterSummary(
-                    cluster_id="cluster-1",
+                ThreadSummary(
+                    thread_id="thread-1",
                     topic="国际政治",
                     headline_zh="伊朗局势升级",
                     summary_zh="中东局势持续紧张。",
@@ -30,7 +30,7 @@ def _make_briefing() -> FinalBriefing:
                 )
             ]
         },
-        total_clusters=1,
+        total_threads=1,
         total_sources=2,
         generated_at=datetime(2026, 4, 6, 12, 0, tzinfo=timezone.utc),
         token_usage={"input_tokens": 15, "output_tokens": 30},
@@ -95,8 +95,8 @@ def test_render_briefing_supports_final_briefing(sample_config, tmp_path) -> Non
         overview_zh="今天重点关注国际政治与能源市场。",
         topics={
             "经济金融": [
-                ClusterSummary(
-                    cluster_id="cluster-2",
+                ThreadSummary(
+                    thread_id="thread-2",
                     topic="经济金融",
                     headline_zh="油价波动加剧",
                     summary_zh="国际油价因地缘政治变化而震荡。",
@@ -107,7 +107,7 @@ def test_render_briefing_supports_final_briefing(sample_config, tmp_path) -> Non
                 )
             ]
         },
-        total_clusters=1,
+        total_threads=1,
         total_sources=1,
         generated_at=datetime(2026, 4, 6, 12, 0, tzinfo=timezone.utc),
         token_usage={"input_tokens": 0, "output_tokens": 0},

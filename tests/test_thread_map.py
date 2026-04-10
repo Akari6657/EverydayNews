@@ -108,7 +108,7 @@ def test_summarize_threads_with_usage_returns_cluster_summaries(sample_config, m
     result = summarize_threads_with_usage([thread], sample_config, client=client)
 
     assert len(result.summaries) == 1
-    assert result.summaries[0].cluster_id == "thread-7"
+    assert result.summaries[0].thread_id == "thread-7"
     assert result.summaries[0].topic == "经济金融"
     assert result.summaries[0].source_names == ["New York Times", "BBC News"]
     assert result.token_usage == {"input_tokens": 50, "output_tokens": 70}

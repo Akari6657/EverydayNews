@@ -1,4 +1,4 @@
-"""Map-stage summarization from story threads to structured summaries."""
+"""Map-stage summarization from story threads to structured thread summaries."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import time
 from datetime import timezone
 from typing import Any, Iterable, Sequence
 
-from .models import AppConfig, ClusterSummary, MapSummariesResult, StoryThread
+from .models import AppConfig, MapSummariesResult, StoryThread, ThreadSummary
 from .prompts import (
     THREAD_MAP_JSON_RETRY_SUFFIX,
     THREAD_MAP_SYSTEM_PROMPT,
@@ -23,8 +23,8 @@ def summarize_threads(
     threads: list[StoryThread],
     config: AppConfig,
     client: Any | None = None,
-) -> list[ClusterSummary]:
-    """Summarize story threads into the existing structured summary format."""
+) -> list[ThreadSummary]:
+    """Summarize story threads into structured thread summaries."""
 
     return summarize_threads_with_usage(threads, config, client=client).summaries
 
@@ -43,15 +43,15 @@ def summarize_threads_with_usage(
             model=config.llm.model,
             batches_total=0,
             batches_failed=0,
-            clusters_skipped=0,
+            threads_skipped=0,
         )
     llm_client = client or _create_client(config)
-    summaries: list[ClusterSummary] = []
+    summaries: list[ThreadSummary] = []
     token_usage = {"input_tokens": 0, "output_tokens": 0}
     model = config.llm.model
     batches_total = 0
     batches_failed = 0
-    clusters_skipped = 0
+    threads_skipped = 0
     batch_size = min(config.summarizer.map.batch_size, 4)
     for batch in _chunked(threads, batch_size):
         (
@@ -66,7 +66,7 @@ def summarize_threads_with_usage(
         token_usage = _merge_token_usage(token_usage, batch_usage)
         batches_total += batch_attempts
         batches_failed += batch_failures
-        clusters_skipped += batch_skipped
+        threads_skipped += batch_skipped
         if batch_model:
             model = batch_model
     return MapSummariesResult(
@@ -75,7 +75,7 @@ def summarize_threads_with_usage(
         model=model,
         batches_total=batches_total,
         batches_failed=batches_failed,
-        clusters_skipped=clusters_skipped,
+        threads_skipped=threads_skipped,
     )
 
 
@@ -83,7 +83,7 @@ def _summarize_thread_batch_resilient(
     threads: list[StoryThread],
     config: AppConfig,
     client: Any,
-) -> tuple[list[ClusterSummary], dict[str, int], str | None, int, int, int]:
+) -> tuple[list[ThreadSummary], dict[str, int], str | None, int, int, int]:
     """Summarize a batch of threads, recursively splitting failed batches."""
 
     batch_summaries, batch_usage, batch_model = _summarize_thread_batch(threads, config, client)
@@ -117,7 +117,7 @@ def _summarize_thread_batch(
     threads: list[StoryThread],
     config: AppConfig,
     client: Any,
-) -> tuple[list[ClusterSummary], dict[str, int], str | None]:
+) -> tuple[list[ThreadSummary], dict[str, int], str | None]:
     """Summarize one batch of story threads, retrying invalid JSON once."""
 
     prompt = THREAD_MAP_USER_PROMPT_TEMPLATE.format(threads_payload=_build_threads_payload(threads))
@@ -247,16 +247,16 @@ def _load_json_payload(raw_text: str) -> Any:
     raise json.JSONDecodeError("No JSON content found", raw_text, 0)
 
 
-def _parse_thread_summary(item: dict[str, Any], thread: StoryThread) -> ClusterSummary:
-    """Convert one JSON object into a ClusterSummary for a story thread."""
+def _parse_thread_summary(item: dict[str, Any], thread: StoryThread) -> ThreadSummary:
+    """Convert one JSON object into a ThreadSummary for a story thread."""
 
     topic = _require_non_empty_string(item, "topic")
     headline_zh = _require_non_empty_string(item, "headline_zh")
     summary_zh = _require_non_empty_string(item, "summary_zh")
     importance = _coerce_importance(item.get("importance"))
     entities = _coerce_string_list(item.get("entities", []))
-    return ClusterSummary(
-        cluster_id=f"thread-{thread.thread_id}",
+    return ThreadSummary(
+        thread_id=f"thread-{thread.thread_id}",
         topic=topic,
         headline_zh=headline_zh,
         summary_zh=summary_zh,

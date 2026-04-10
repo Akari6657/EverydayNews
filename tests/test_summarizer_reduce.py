@@ -113,7 +113,7 @@ def test_build_final_briefing_groups_topics_and_aggregates_usage(sample_config) 
 
     assert briefing.overview_zh.startswith("国际局势")
     assert list(briefing.topics) == ["国际政治", "经济金融"]
-    assert briefing.total_clusters == 2
+    assert briefing.total_threads == 2
     assert briefing.total_sources == 2
     assert briefing.token_usage == {"input_tokens": 544, "output_tokens": 161}
     assert client.chat.completions.calls[0]["response_format"] == {"type": "json_object"}
@@ -148,7 +148,7 @@ def test_build_final_briefing_retries_invalid_json(sample_config, monkeypatch) -
 
     assert len(client.chat.completions.calls) == 2
     assert list(briefing.topics) == ["国际政治"]
-    assert briefing.topics["国际政治"][0].cluster_id == "cluster-1"
+    assert briefing.topics["国际政治"][0].thread_id == "cluster-1"
 
 
 def test_build_final_briefing_falls_back_after_content_risk(sample_config) -> None:
@@ -168,13 +168,13 @@ def test_build_final_briefing_falls_back_after_content_risk(sample_config) -> No
     briefing = build_final_briefing(summaries, sample_config, client=client)
 
     assert briefing.model.endswith("(fallback)")
-    assert briefing.total_clusters == 2
+    assert briefing.total_threads == 2
     assert "今日简报重点涵盖" in briefing.overview_zh
     assert list(briefing.topics) == ["国际政治", "经济金融"]
 
 
-def test_build_final_briefing_appends_missing_clusters(sample_config) -> None:
-    """Omitted clusters should be appended back under their original topics."""
+def test_build_final_briefing_appends_missing_threads(sample_config) -> None:
+    """Omitted threads should be appended back under their original topics."""
 
     summaries = [
         _summary("cluster-1", topic="国际政治", importance=9),
@@ -200,7 +200,7 @@ def test_build_final_briefing_appends_missing_clusters(sample_config) -> None:
     briefing = build_final_briefing(summaries, sample_config, client=client)
 
     assert "科技" in briefing.topics
-    assert briefing.topics["科技"][0].cluster_id == "cluster-2"
+    assert briefing.topics["科技"][0].thread_id == "cluster-2"
 
 
 def test_build_final_briefing_limits_selected_summaries(sample_config) -> None:
@@ -236,8 +236,8 @@ def test_build_final_briefing_limits_selected_summaries(sample_config) -> None:
 
     briefing = build_final_briefing(summaries, config, client=client)
 
-    assert briefing.total_clusters == 1
-    assert briefing.topics["国际政治"][0].cluster_id == "cluster-2"
+    assert briefing.total_threads == 1
+    assert briefing.topics["国际政治"][0].thread_id == "cluster-2"
 
 
 def test_build_final_briefing_filters_below_importance_threshold(sample_config) -> None:
@@ -267,8 +267,8 @@ def test_build_final_briefing_filters_below_importance_threshold(sample_config) 
 
     briefing = build_final_briefing(summaries, sample_config, client=client)
 
-    assert briefing.total_clusters == 2
-    assert [item.cluster_id for item in briefing.topics["国际政治"]] == ["cluster-3", "cluster-2"]
+    assert briefing.total_threads == 2
+    assert [item.thread_id for item in briefing.topics["国际政治"]] == ["cluster-3", "cluster-2"]
 
 
 def test_build_final_briefing_filters_noise_keywords(sample_config) -> None:
@@ -297,8 +297,8 @@ def test_build_final_briefing_filters_noise_keywords(sample_config) -> None:
 
     briefing = build_final_briefing(summaries, sample_config, client=client)
 
-    assert briefing.total_clusters == 1
-    assert [item.cluster_id for item in briefing.topics["国际政治"]] == ["cluster-2"]
+    assert briefing.total_threads == 1
+    assert [item.thread_id for item in briefing.topics["国际政治"]] == ["cluster-2"]
 
 
 def test_build_final_briefing_trims_each_topic_to_limit(sample_config) -> None:
@@ -329,12 +329,12 @@ def test_build_final_briefing_trims_each_topic_to_limit(sample_config) -> None:
 
     briefing = build_final_briefing(summaries, config, client=client)
 
-    assert briefing.total_clusters == 2
-    assert [item.cluster_id for item in briefing.topics["国际政治"]] == ["cluster-1", "cluster-2"]
+    assert briefing.total_threads == 2
+    assert [item.thread_id for item in briefing.topics["国际政治"]] == ["cluster-1", "cluster-2"]
 
 
-def test_build_final_briefing_falls_back_on_unknown_cluster_id(sample_config) -> None:
-    """Unknown cluster ids from the model should trigger local fallback assembly."""
+def test_build_final_briefing_falls_back_on_unknown_thread_id(sample_config) -> None:
+    """Unknown thread ids from the model should trigger local fallback assembly."""
 
     response = FakeResponse(
         choices=[
@@ -356,8 +356,8 @@ def test_build_final_briefing_falls_back_on_unknown_cluster_id(sample_config) ->
     briefing = build_final_briefing([_summary("cluster-1")], sample_config, client=client)
 
     assert briefing.model.endswith("(fallback)")
-    assert briefing.total_clusters == 1
-    assert briefing.topics["国际政治"][0].cluster_id == "cluster-1"
+    assert briefing.total_threads == 1
+    assert briefing.topics["国际政治"][0].thread_id == "cluster-1"
 
 
 def test_build_final_briefing_still_accepts_object_items(sample_config) -> None:
@@ -373,7 +373,7 @@ def test_build_final_briefing_still_accepts_object_items(sample_config) -> None:
                             "topics": {
                                 "国际政治": [
                                     {
-                                        "cluster_id": "cluster-1",
+                                        "thread_id": "cluster-1",
                                         "headline_zh": "覆盖后的标题",
                                     }
                                 ]
@@ -393,24 +393,24 @@ def test_build_final_briefing_still_accepts_object_items(sample_config) -> None:
 
 
 def _summary(
-    cluster_id: str,
+    thread_id: str,
     topic: str = "国际政治",
     headline_zh: str = "默认标题",
     summary_zh: str = "默认摘要",
     importance: int = 8,
     source_names: list[str] | None = None,
 ):
-    """Build a ClusterSummary test object."""
+    """Build a ThreadSummary test object."""
 
-    from src.models import ClusterSummary
+    from src.models import ThreadSummary
 
-    return ClusterSummary(
-        cluster_id=cluster_id,
+    return ThreadSummary(
+        thread_id=thread_id,
         topic=topic,
         headline_zh=headline_zh,
         summary_zh=summary_zh,
         importance=importance,
         entities=["实体A"],
         source_names=source_names or ["New York Times"],
-        primary_link=f"https://example.com/{cluster_id}",
+        primary_link=f"https://example.com/{thread_id}",
     )

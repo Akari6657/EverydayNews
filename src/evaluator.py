@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .models import AppConfig, ClusterSummary, EvaluationResult, RunMetrics
+from .models import AppConfig, EvaluationResult, RunMetrics, ThreadSummary
 from .prompts import (
     EVALUATION_JSON_RETRY_SUFFIX,
     EVALUATION_SYSTEM_PROMPT,
@@ -23,7 +23,7 @@ LOGGER = logging.getLogger(__name__)
 
 def evaluate_briefing(
     briefing_markdown: str,
-    summaries: list[ClusterSummary],
+    summaries: list[ThreadSummary],
     config: AppConfig,
     client: Any | None = None,
     now: datetime | None = None,
@@ -33,7 +33,7 @@ def evaluate_briefing(
     llm_client = client or _create_client(config)
     prompt = EVALUATION_USER_PROMPT_TEMPLATE.format(
         briefing_markdown=briefing_markdown.strip(),
-        cluster_summaries=_build_summaries_payload(summaries),
+        thread_summaries=_build_summaries_payload(summaries),
     )
     max_retries = config.evaluation.max_retries
     for attempt in range(max_retries):
@@ -140,20 +140,20 @@ def _parse_evaluation_result(
     )
 
 
-def _build_summaries_payload(summaries: list[ClusterSummary]) -> str:
-    """Render cluster summaries into a compact evaluation payload."""
+def _build_summaries_payload(summaries: list[ThreadSummary]) -> str:
+    """Render thread summaries into a compact evaluation payload."""
 
     if not summaries:
         return "无候选新闻。"
     return "\n".join(_summary_block(summary) for summary in summaries)
 
 
-def _summary_block(summary: ClusterSummary) -> str:
+def _summary_block(summary: ThreadSummary) -> str:
     """Render one summary block for the evaluation prompt."""
 
     return "\n".join(
         [
-            f"[cluster_id: {summary.cluster_id}]",
+            f"[thread_id: {summary.thread_id}]",
             f"主题: {summary.topic}",
             f"标题: {summary.headline_zh}",
             f"摘要: {summary.summary_zh}",

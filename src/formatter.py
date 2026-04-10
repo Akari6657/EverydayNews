@@ -11,10 +11,10 @@ from string import Template
 from .models import (
     AppConfig,
     Article,
-    ClusterSummary,
     FinalBriefing,
     JsonOutputConfig,
     MarkdownOutputConfig,
+    ThreadSummary,
 )
 
 DEFAULT_TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "briefing.md.j2"
@@ -111,7 +111,7 @@ def _article_count_for_briefing(
     """Return the count displayed in the template header."""
 
     del articles
-    return briefing.total_clusters
+    return briefing.total_threads
 
 
 def _source_names_for_briefing(
@@ -148,12 +148,12 @@ def _render_structured_markdown(briefing: FinalBriefing) -> str:
         lines.append(f"## {topic_name}")
         lines.append("")
         for item in items:
-            lines.extend(_cluster_summary_lines(item))
+            lines.extend(_thread_summary_lines(item))
             lines.append("")
     return "\n".join(line for line in lines if line is not None).strip()
 
 
-def _cluster_summary_lines(item: ClusterSummary) -> list[str]:
+def _thread_summary_lines(item: ThreadSummary) -> list[str]:
     """Render one structured summary into Markdown lines."""
 
     lines = [

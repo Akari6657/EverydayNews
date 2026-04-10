@@ -271,10 +271,10 @@ class ThreadDedupDiagnostics:
 
 
 @dataclass(frozen=True)
-class ClusterSummary:
-    """Map-stage summary for a single deduplicated event cluster."""
+class ThreadSummary:
+    """Map-stage summary for a single story thread."""
 
-    cluster_id: str
+    thread_id: str
     topic: str
     headline_zh: str
     summary_zh: str
@@ -288,12 +288,12 @@ class ClusterSummary:
 class MapSummariesResult:
     """Aggregated result of the map-stage summarization step."""
 
-    summaries: list[ClusterSummary]
+    summaries: list[ThreadSummary]
     token_usage: dict[str, int]
     model: str
     batches_total: int = 0
     batches_failed: int = 0
-    clusters_skipped: int = 0
+    threads_skipped: int = 0
 
 
 @dataclass(frozen=True)
@@ -302,8 +302,8 @@ class FinalBriefing:
 
     date: str
     overview_zh: str
-    topics: dict[str, list[ClusterSummary]]
-    total_clusters: int
+    topics: dict[str, list[ThreadSummary]]
+    total_threads: int
     total_sources: int
     generated_at: datetime
     token_usage: dict[str, int]
@@ -343,7 +343,7 @@ class RunMetrics:
 
     date: str
     articles_fetched: int
-    clusters: int
+    threads: int
     map_summaries_generated: int
     after_importance_filter: int
     final_items: int
@@ -351,7 +351,7 @@ class RunMetrics:
     duration_seconds: float
     map_batches_total: int
     map_batches_failed: int
-    map_clusters_skipped: int
+    map_threads_skipped: int
     eval_scores: dict[str, int] | None
     eval_notes: str | None
     status: str = "success"

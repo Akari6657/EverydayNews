@@ -1,4 +1,4 @@
-"""Reduce-stage summarization from ClusterSummary to FinalBriefing."""
+"""Reduce-stage summarization from thread summaries to the final briefing."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from .models import AppConfig, ClusterSummary, FinalBriefing
+from .models import AppConfig, FinalBriefing, ThreadSummary
 from .prompts import (
     REDUCE_JSON_RETRY_SUFFIX,
     REDUCE_SAFE_USER_PROMPT_TEMPLATE,
@@ -22,7 +22,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 def build_final_briefing(
-    summaries: list[ClusterSummary],
+    summaries: list[ThreadSummary],
     config: AppConfig,
     client: Any | None = None,
     now: datetime | None = None,
@@ -57,13 +57,13 @@ def build_final_briefing(
         return _fallback_briefing(selected, config, generated_at, token_usage)
 
 
-def count_reduce_candidates(summaries: list[ClusterSummary], config: AppConfig) -> int:
+def count_reduce_candidates(summaries: list[ThreadSummary], config: AppConfig) -> int:
     """Return how many summaries survive reduce-stage prefiltering."""
 
     return len(_select_summaries(summaries, config))
 
 
-def _select_summaries(summaries: list[ClusterSummary], config: AppConfig) -> list[ClusterSummary]:
+def _select_summaries(summaries: list[ThreadSummary], config: AppConfig) -> list[ThreadSummary]:
     """Select the top summaries that should participate in reduce."""
 
     filtered = [
@@ -77,7 +77,7 @@ def _select_summaries(summaries: list[ClusterSummary], config: AppConfig) -> lis
         key=lambda summary: (
             -summary.importance,
             -len(summary.source_names),
-            summary.cluster_id,
+            summary.thread_id,
         ),
     )
     return ranked[: config.summarizer.reduce.top_k]
@@ -95,7 +95,7 @@ def _empty_briefing(
         date=generated_at.astimezone(timezone.utc).strftime("%Y-%m-%d"),
         overview_zh="今日暂无新的头条新闻。",
         topics={},
-        total_clusters=0,
+        total_threads=0,
         total_sources=0,
         generated_at=generated_at,
         token_usage=usage,
@@ -103,23 +103,23 @@ def _empty_briefing(
     )
 
 
-def _build_summaries_payload(summaries: list[ClusterSummary]) -> str:
+def _build_summaries_payload(summaries: list[ThreadSummary]) -> str:
     """Render all selected summaries into the reduce prompt payload."""
 
     return "\n".join(_summary_block(summary) for summary in summaries)
 
 
-def _build_safe_summaries_payload(summaries: list[ClusterSummary]) -> str:
+def _build_safe_summaries_payload(summaries: list[ThreadSummary]) -> str:
     """Render a minimal payload for safer reduce retries."""
 
     return "\n".join(_safe_summary_block(summary) for summary in summaries)
 
 
-def _summary_block(summary: ClusterSummary) -> str:
+def _summary_block(summary: ThreadSummary) -> str:
     """Render one map-stage summary block for the model prompt."""
 
     lines = [
-        f"[cluster_id: {summary.cluster_id}]",
+        f"[thread_id: {summary.thread_id}]",
         f"主题: {summary.topic}",
         f"中文标题: {summary.headline_zh}",
         f"摘要: {summary.summary_zh}",
@@ -132,11 +132,11 @@ def _summary_block(summary: ClusterSummary) -> str:
     return "\n".join(lines)
 
 
-def _safe_summary_block(summary: ClusterSummary) -> str:
+def _safe_summary_block(summary: ThreadSummary) -> str:
     """Render a reduced-risk block for fallback reduce prompts."""
 
     lines = [
-        f"[cluster_id: {summary.cluster_id}]",
+        f"[thread_id: {summary.thread_id}]",
         f"主题: {summary.topic}",
         f"中文标题: {summary.headline_zh}",
         f"重要性: {summary.importance}/10",
@@ -203,20 +203,20 @@ def _request_reduce(client: Any, config: AppConfig, prompt: str) -> Any:
 
 
 def _fallback_briefing(
-    selected: list[ClusterSummary],
+    selected: list[ThreadSummary],
     config: AppConfig,
     generated_at: datetime,
     prior_token_usage: dict[str, int] | None,
 ) -> FinalBriefing:
     """Assemble a deterministic local briefing when reduce LLM calls fail."""
 
-    topics: dict[str, list[ClusterSummary]] = {}
+    topics: dict[str, list[ThreadSummary]] = {}
     for summary in selected:
         topics.setdefault(summary.topic, []).append(summary)
     for topic_name, items in list(topics.items()):
         ranked = sorted(
             items,
-            key=lambda item: (-item.importance, -len(item.source_names), item.cluster_id),
+            key=lambda item: (-item.importance, -len(item.source_names), item.thread_id),
         )
         topics[topic_name] = ranked[: config.pipeline.max_items_per_topic]
     displayed = [summary for items in topics.values() for summary in items]
@@ -224,7 +224,7 @@ def _fallback_briefing(
         date=generated_at.astimezone(timezone.utc).strftime("%Y-%m-%d"),
         overview_zh=_fallback_overview(topics),
         topics=topics,
-        total_clusters=len(displayed),
+        total_threads=len(displayed),
         total_sources=len({name for summary in displayed for name in summary.source_names}),
         generated_at=generated_at,
         token_usage=_merge_token_usage(prior_token_usage, {"input_tokens": 0, "output_tokens": 0}),
@@ -232,7 +232,7 @@ def _fallback_briefing(
     )
 
 
-def _fallback_overview(topics: dict[str, list[ClusterSummary]]) -> str:
+def _fallback_overview(topics: dict[str, list[ThreadSummary]]) -> str:
     """Generate a simple Chinese overview without an extra LLM call."""
 
     if not topics:
@@ -260,7 +260,7 @@ def _fallback_overview(topics: dict[str, list[ClusterSummary]]) -> str:
 
 def _parse_final_briefing(
     payload: dict[str, Any],
-    selected: list[ClusterSummary],
+    selected: list[ThreadSummary],
     config: AppConfig,
     response: Any,
     generated_at: datetime,
@@ -276,22 +276,22 @@ def _parse_final_briefing(
     if not isinstance(topic_payload, dict):
         raise ValueError("Reduce-stage JSON must include an object 'topics'")
 
-    summary_lookup = {summary.cluster_id: summary for summary in selected}
-    topics: dict[str, list[ClusterSummary]] = {}
-    seen_cluster_ids: set[str] = set()
+    summary_lookup = {summary.thread_id: summary for summary in selected}
+    topics: dict[str, list[ThreadSummary]] = {}
+    seen_thread_ids: set[str] = set()
     for topic_name, items in topic_payload.items():
         if not isinstance(topic_name, str) or not topic_name.strip():
             raise ValueError("Topic names in reduce-stage JSON must be non-empty strings")
         if not isinstance(items, list):
             raise ValueError("Each topic in reduce-stage JSON must map to a list")
-        parsed_items: list[ClusterSummary] = []
+        parsed_items: list[ThreadSummary] = []
         for item in items:
             parsed_summary = _parse_topic_item(item, topic_name.strip(), summary_lookup)
             parsed_items.append(parsed_summary)
-            seen_cluster_ids.add(parsed_summary.cluster_id)
+            seen_thread_ids.add(parsed_summary.thread_id)
         topics[topic_name.strip()] = parsed_items
 
-    _append_missing_summaries(topics, selected, seen_cluster_ids)
+    _append_missing_summaries(topics, selected, seen_thread_ids)
     _trim_topics(topics, config.pipeline.max_items_per_topic)
     displayed = [summary for items in topics.values() for summary in items]
     usage = _merge_token_usage(prior_token_usage, _response_token_usage(response))
@@ -299,7 +299,7 @@ def _parse_final_briefing(
         date=generated_at.astimezone(timezone.utc).strftime("%Y-%m-%d"),
         overview_zh=overview.strip(),
         topics=topics,
-        total_clusters=len(displayed),
+        total_threads=len(displayed),
         total_sources=len({name for summary in displayed for name in summary.source_names}),
         generated_at=generated_at,
         token_usage=usage,
@@ -342,23 +342,23 @@ def _is_content_risk_error(exc: Exception) -> bool:
 def _parse_topic_item(
     item: Any,
     topic_name: str,
-    summary_lookup: dict[str, ClusterSummary],
-) -> ClusterSummary:
+    summary_lookup: dict[str, ThreadSummary],
+) -> ThreadSummary:
     """Parse one topic item, falling back to map-stage fields when needed."""
 
     if isinstance(item, str):
-        cluster_id = item.strip()
-        if not cluster_id:
-            raise ValueError("Reduce-stage topic items cannot include empty cluster ids")
-        base = _lookup_cluster(cluster_id, summary_lookup)
+        thread_id = item.strip()
+        if not thread_id:
+            raise ValueError("Reduce-stage topic items cannot include empty thread ids")
+        base = _lookup_thread(thread_id, summary_lookup)
         return _with_topic(base, topic_name)
     if not isinstance(item, dict):
-        raise ValueError("Reduce-stage topic items must be objects or cluster id strings")
+        raise ValueError("Reduce-stage topic items must be objects or thread id strings")
 
-    cluster_id = item.get("cluster_id")
-    if not isinstance(cluster_id, str) or not cluster_id.strip():
-        raise ValueError("Reduce-stage topic items must include a non-empty 'cluster_id'")
-    base = _lookup_cluster(cluster_id.strip(), summary_lookup)
+    thread_id = item.get("thread_id")
+    if not isinstance(thread_id, str) or not thread_id.strip():
+        raise ValueError("Reduce-stage topic items must include a non-empty 'thread_id'")
+    base = _lookup_thread(thread_id.strip(), summary_lookup)
 
     headline = _optional_string(item.get("headline_zh")) or base.headline_zh
     summary_zh = _optional_string(item.get("summary_zh")) or base.summary_zh
@@ -367,8 +367,8 @@ def _parse_topic_item(
     source_names = _coerce_string_list(item.get("source_names"), base.source_names)
     primary_link = _optional_string(item.get("primary_link")) or base.primary_link
 
-    return ClusterSummary(
-        cluster_id=base.cluster_id,
+    return ThreadSummary(
+        thread_id=base.thread_id,
         topic=topic_name,
         headline_zh=headline,
         summary_zh=summary_zh,
@@ -379,20 +379,20 @@ def _parse_topic_item(
     )
 
 
-def _lookup_cluster(cluster_id: str, summary_lookup: dict[str, ClusterSummary]) -> ClusterSummary:
-    """Look up one cluster id from the selected summaries."""
+def _lookup_thread(thread_id: str, summary_lookup: dict[str, ThreadSummary]) -> ThreadSummary:
+    """Look up one thread id from the selected summaries."""
 
     try:
-        return summary_lookup[cluster_id]
+        return summary_lookup[thread_id]
     except KeyError as exc:
-        raise ValueError(f"Unknown cluster_id returned by reduce-stage JSON: {cluster_id}") from exc
+        raise ValueError(f"Unknown thread_id returned by reduce-stage JSON: {thread_id}") from exc
 
 
-def _with_topic(summary: ClusterSummary, topic_name: str) -> ClusterSummary:
+def _with_topic(summary: ThreadSummary, topic_name: str) -> ThreadSummary:
     """Return a copy of a summary with a replaced topic."""
 
-    return ClusterSummary(
-        cluster_id=summary.cluster_id,
+    return ThreadSummary(
+        thread_id=summary.thread_id,
         topic=topic_name,
         headline_zh=summary.headline_zh,
         summary_zh=summary.summary_zh,
@@ -404,13 +404,13 @@ def _with_topic(summary: ClusterSummary, topic_name: str) -> ClusterSummary:
 
 
 def _append_missing_summaries(
-    topics: dict[str, list[ClusterSummary]],
-    selected: list[ClusterSummary],
-    seen_cluster_ids: set[str],
+    topics: dict[str, list[ThreadSummary]],
+    selected: list[ThreadSummary],
+    seen_thread_ids: set[str],
 ) -> None:
     """Keep omitted summaries by appending them under their original topic."""
 
-    missing = [summary for summary in selected if summary.cluster_id not in seen_cluster_ids]
+    missing = [summary for summary in selected if summary.thread_id not in seen_thread_ids]
     if missing:
         LOGGER.warning(
             "Reduce-stage JSON omitted %s summaries; appending them with original topics",
@@ -420,7 +420,7 @@ def _append_missing_summaries(
         topics.setdefault(summary.topic, []).append(summary)
 
 
-def _trim_topics(topics: dict[str, list[ClusterSummary]], limit: int) -> None:
+def _trim_topics(topics: dict[str, list[ThreadSummary]], limit: int) -> None:
     """Trim each topic section to a maximum number of items."""
 
     for topic_name, items in list(topics.items()):
@@ -435,7 +435,7 @@ def _optional_string(value: Any) -> str:
     return ""
 
 
-def _passes_summary_filters(summary: ClusterSummary, config: AppConfig) -> bool:
+def _passes_summary_filters(summary: ThreadSummary, config: AppConfig) -> bool:
     """Return whether a summary should remain eligible for reduce."""
 
     haystack = _normalize_filter_text(

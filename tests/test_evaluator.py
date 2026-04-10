@@ -7,7 +7,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 
 from src.evaluator import append_run_metrics, evaluate_briefing, write_evaluation_result
-from src.models import ClusterSummary, EvaluationConfig, EvaluationResult, RunMetrics
+from src.models import EvaluationConfig, EvaluationResult, RunMetrics, ThreadSummary
 
 
 @dataclass
@@ -84,8 +84,8 @@ def test_evaluate_briefing_parses_scores(sample_config) -> None:
         sample_config,
         evaluation=EvaluationConfig(enabled=True, max_retries=2),
     )
-    summary = ClusterSummary(
-        cluster_id="cluster-1",
+    summary = ThreadSummary(
+        thread_id="cluster-1",
         topic="国际政治",
         headline_zh="测试标题",
         summary_zh="测试摘要",
@@ -172,7 +172,7 @@ def test_write_evaluation_and_metrics_files(sample_config) -> None:
     metrics = RunMetrics(
         date="2026-04-07",
         articles_fetched=79,
-        clusters=30,
+        threads=30,
         map_summaries_generated=25,
         after_importance_filter=12,
         final_items=10,
@@ -180,7 +180,7 @@ def test_write_evaluation_and_metrics_files(sample_config) -> None:
         duration_seconds=42.1234,
         map_batches_total=6,
         map_batches_failed=1,
-        map_clusters_skipped=5,
+        map_threads_skipped=5,
         eval_scores=evaluation.scores,
         eval_notes=evaluation.notes,
     )
@@ -195,6 +195,6 @@ def test_write_evaluation_and_metrics_files(sample_config) -> None:
     assert metrics_path.name == "metrics.jsonl"
     assert len(metrics_lines) == 1
     metrics_payload = json.loads(metrics_lines[0])
-    assert metrics_payload["clusters"] == 30
-    assert metrics_payload["map_clusters_skipped"] == 5
+    assert metrics_payload["threads"] == 30
+    assert metrics_payload["map_threads_skipped"] == 5
     assert metrics_payload["eval_scores"]["clarity"] == 9

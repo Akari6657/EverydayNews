@@ -8,13 +8,13 @@ from pathlib import Path
 
 from src import main
 from src.models import (
-    ClusterSummary,
     EvaluationConfig,
     EvaluationResult,
     FinalBriefing,
     MapSummariesResult,
     StoryThread,
     ThreadDedupDiagnostics,
+    ThreadSummary,
 )
 
 
@@ -125,7 +125,7 @@ def test_run_pipeline_uses_story_threads_by_default(
     make_article,
     tmp_path: Path,
 ) -> None:
-    """The default pipeline should use story threads instead of article clusters."""
+    """The default pipeline should use story threads end to end."""
 
     article = make_article(guid="thread-article-1")
     thread = StoryThread(
@@ -139,8 +139,8 @@ def test_run_pipeline_uses_story_threads_by_default(
         latest_published=article.published,
         rationale="调试用",
     )
-    summary = ClusterSummary(
-        cluster_id="thread-1",
+    summary = ThreadSummary(
+        thread_id="thread-1",
         topic="国际政治",
         headline_zh="线程摘要标题",
         summary_zh="线程摘要内容",
@@ -153,7 +153,7 @@ def test_run_pipeline_uses_story_threads_by_default(
         date="2026-04-08",
         overview_zh="线程版综述。",
         topics={"国际政治": [summary]},
-        total_clusters=1,
+        total_threads=1,
         total_sources=1,
         generated_at=datetime(2026, 4, 8, 12, 0, tzinfo=timezone.utc),
         token_usage={"input_tokens": 10, "output_tokens": 20},
@@ -213,8 +213,8 @@ def test_run_pipeline_writes_evaluation_when_enabled(
         latest_published=article.published,
         rationale="调试用",
     )
-    summary = ClusterSummary(
-        cluster_id="thread-1",
+    summary = ThreadSummary(
+        thread_id="thread-1",
         topic="国际政治",
         headline_zh="测试标题",
         summary_zh="测试摘要",
@@ -227,7 +227,7 @@ def test_run_pipeline_writes_evaluation_when_enabled(
         date="2026-04-06",
         overview_zh="今日综述。",
         topics={"国际政治": [summary]},
-        total_clusters=1,
+        total_threads=1,
         total_sources=1,
         generated_at=datetime(2026, 4, 6, 12, 0, tzinfo=timezone.utc),
         token_usage={"input_tokens": 12, "output_tokens": 34},
@@ -260,7 +260,7 @@ def test_run_pipeline_writes_evaluation_when_enabled(
             model="deepseek-chat",
             batches_total=1,
             batches_failed=0,
-            clusters_skipped=0,
+            threads_skipped=0,
         ),
     )
     monkeypatch.setattr(
@@ -320,8 +320,8 @@ def test_run_pipeline_appends_failed_metrics(monkeypatch, sample_config, make_ar
         latest_published=article.published,
         rationale="调试用",
     )
-    summary = ClusterSummary(
-        cluster_id="thread-1",
+    summary = ThreadSummary(
+        thread_id="thread-1",
         topic="国际政治",
         headline_zh="测试标题",
         summary_zh="测试摘要",
@@ -334,7 +334,7 @@ def test_run_pipeline_appends_failed_metrics(monkeypatch, sample_config, make_ar
         date="2026-04-06",
         overview_zh="今日综述。",
         topics={"国际政治": [summary]},
-        total_clusters=1,
+        total_threads=1,
         total_sources=1,
         generated_at=datetime(2026, 4, 6, 12, 0, tzinfo=timezone.utc),
         token_usage={"input_tokens": 12, "output_tokens": 34},
@@ -355,7 +355,7 @@ def test_run_pipeline_appends_failed_metrics(monkeypatch, sample_config, make_ar
             model="deepseek-chat",
             batches_total=1,
             batches_failed=0,
-            clusters_skipped=0,
+            threads_skipped=0,
         ),
     )
     monkeypatch.setattr(
