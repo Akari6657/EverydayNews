@@ -4,14 +4,24 @@ Daily Headline Agent collects RSS headlines from major news outlets, removes dup
 
 Daily Headline Agent（每日头条助手）会从多个国际新闻 RSS 源抓取头条，做跨媒体去重，再调用 LLM 生成中文摘要，并输出每日简报。
 
+The active pipeline on this branch is the **V2 story-thread pipeline**:
+
+`fetch -> story-thread clustering -> within-thread near-dup cleanup -> ranking -> map/reduce briefing`
+
 ## Quick Start
 
 ```bash
 pip install -r requirements.txt
 cp .env.example .env
-python -m src.main --dry-run
 python -m src.main
+python -m src.main --dump-threads
 ```
+
+Notes:
+
+- `python -m src.main` runs the default V2 story-thread pipeline.
+- `python -m src.main --dump-threads` prints the intermediate story-thread assignments for manual review.
+- `python -m src.main --dump-threads --dedup-within-threads` adds strict near-duplicate cleanup inside each story thread.
 
 ## Configuration
 
@@ -30,8 +40,8 @@ Use `config.yaml` as the stable default briefing for "daily global headlines". W
 Examples:
 
 ```bash
-python -m src.main --config config.yaml --dry-run
-python -m src.main --config config.north-america.yaml --dry-run
+python -m src.main --config config.yaml
+python -m src.main --config config.north-america.yaml
 python -m src.main --config config.tech.yaml
 ```
 

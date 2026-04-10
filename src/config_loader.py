@@ -17,12 +17,14 @@ from .models import (
     MarkdownOutputConfig,
     OutputConfig,
     PipelineConfig,
+    RankingConfig,
     ScheduleConfig,
     SourceConfig,
     SummarizerConfig,
     SummarizerMapConfig,
     SummarizerReduceConfig,
     TelegramOutputConfig,
+    ThreadClusteringConfig,
 )
 
 
@@ -45,13 +47,15 @@ def get_config(
     return AppConfig(
         sources=_parse_sources(payload),
         pipeline=pipeline,
-        dedup=_parse_dedup(payload, pipeline),
+        dedup=_parse_dedup(payload),
         summarizer=_parse_summarizer(payload),
         llm=_parse_llm(payload),
         output=_parse_output(payload),
         schedule=_parse_schedule(payload),
         root_dir=root_dir,
         config_path=config_file,
+        thread_clustering=_parse_thread_clustering(payload),
+        ranking=_parse_ranking(payload),
         evaluation=_parse_evaluation(payload),
     )
 
@@ -144,35 +148,36 @@ def _parse_pipeline(payload: dict[str, Any]) -> PipelineConfig:
         ),
         max_items_per_topic=_positive_int_with_default(section, "max_items_per_topic", 4),
         exclude_summary_keywords=_optional_string_list(section, "exclude_summary_keywords"),
-        dedup_similarity_threshold=_require_float(section, "dedup_similarity_threshold"),
         language=_require_string(section, "language"),
         briefing_style=_require_string(section, "briefing_style"),
     )
 
 
-def _parse_dedup(payload: dict[str, Any], pipeline: PipelineConfig) -> DedupConfig:
-    """Parse deduplication settings with sensible defaults."""
+def _parse_dedup(payload: dict[str, Any]) -> DedupConfig:
+    """Parse within-thread near-duplicate settings with sensible defaults."""
 
     section = payload.get("dedup")
     if section is None:
         return DedupConfig(
             method="embedding",
             model="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-            similarity_threshold=pipeline.dedup_similarity_threshold,
-            clustering_algorithm="greedy",
             cache_embeddings=True,
+            within_thread_enabled=False,
+            within_thread_similarity_threshold=0.88,
         )
     if not isinstance(section, dict):
         raise ConfigError("'dedup' must be a mapping")
     method = str(section.get("method", "embedding")).strip()
-    clustering_algorithm = str(section.get("clustering_algorithm", "greedy")).strip()
     if method not in {"embedding", "difflib"}:
         raise ConfigError("'dedup.method' must be either 'embedding' or 'difflib'")
-    if clustering_algorithm not in {"greedy", "dbscan"}:
-        raise ConfigError("'dedup.clustering_algorithm' must be either 'greedy' or 'dbscan'")
     cache_embeddings = section.get("cache_embeddings", True)
     if not isinstance(cache_embeddings, bool):
         raise ConfigError("'dedup.cache_embeddings' must be a boolean")
+    within_thread = section.get("within_thread", {})
+    if within_thread is None:
+        within_thread = {}
+    if not isinstance(within_thread, dict):
+        raise ConfigError("'dedup.within_thread' must be a mapping")
     return DedupConfig(
         method=method,
         model=str(
@@ -181,9 +186,9 @@ def _parse_dedup(payload: dict[str, Any], pipeline: PipelineConfig) -> DedupConf
                 "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
             )
         ).strip(),
-        similarity_threshold=float(section.get("similarity_threshold", pipeline.dedup_similarity_threshold)),
-        clustering_algorithm=clustering_algorithm,
         cache_embeddings=cache_embeddings,
+        within_thread_enabled=_require_bool_with_default(within_thread, "enabled", False),
+        within_thread_similarity_threshold=float(within_thread.get("similarity_threshold", 0.88)),
     )
 
 
@@ -224,6 +229,73 @@ def _parse_llm(payload: dict[str, Any]) -> LLMConfig:
         api_key_env=_require_string(section, "api_key_env"),
         max_tokens=_require_int(section, "max_tokens"),
         temperature=_require_float(section, "temperature"),
+    )
+
+
+def _parse_thread_clustering(payload: dict[str, Any]) -> ThreadClusteringConfig:
+    """Parse optional story-thread clustering settings."""
+
+    llm_section = payload.get("llm", {})
+    default_provider = (
+        str(llm_section.get("provider", "deepseek")).strip()
+        if isinstance(llm_section, dict)
+        else "deepseek"
+    )
+    default_model = (
+        str(llm_section.get("model", "deepseek-chat")).strip()
+        if isinstance(llm_section, dict)
+        else "deepseek-chat"
+    )
+    section = payload.get("thread_clustering")
+    if section is None:
+        return ThreadClusteringConfig(
+            enabled=True,
+            provider=default_provider,
+            model=default_model,
+            max_retries=2,
+            max_articles_per_call=150,
+            max_articles_per_thread=12,
+            max_refinement_rounds=1,
+        )
+    if not isinstance(section, dict):
+        raise ConfigError("'thread_clustering' must be a mapping")
+    provider = str(section.get("provider", default_provider)).strip()
+    if provider != "deepseek":
+        raise ConfigError("Only the 'deepseek' provider is currently supported for thread clustering")
+    return ThreadClusteringConfig(
+        enabled=_require_bool_with_default(section, "enabled", True),
+        provider=provider,
+        model=_require_string_with_default(section, "model", default_model),
+        max_retries=_positive_int(
+            section.get("max_retries", 2),
+            "thread_clustering.max_retries",
+        ),
+        max_articles_per_call=_positive_int(
+            section.get("max_articles_per_call", 150),
+            "thread_clustering.max_articles_per_call",
+        ),
+        max_articles_per_thread=_positive_int(
+            section.get("max_articles_per_thread", 12),
+            "thread_clustering.max_articles_per_thread",
+        ),
+        max_refinement_rounds=_positive_int(
+            section.get("max_refinement_rounds", 1),
+            "thread_clustering.max_refinement_rounds",
+        ),
+    )
+
+
+def _parse_ranking(payload: dict[str, Any]) -> RankingConfig:
+    """Parse optional thread-ranking settings."""
+
+    section = payload.get("ranking")
+    if section is None:
+        return RankingConfig(importance_floor=0.15, keep_major_always=True)
+    if not isinstance(section, dict):
+        raise ConfigError("'ranking' must be a mapping")
+    return RankingConfig(
+        importance_floor=float(section.get("importance_floor", 0.15)),
+        keep_major_always=_require_bool_with_default(section, "keep_major_always", True),
     )
 
 

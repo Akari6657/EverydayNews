@@ -68,16 +68,29 @@ pipeline:
   importance_threshold: 5
   max_items_per_topic: 4
   exclude_summary_keywords: ["最新动态", "持续更新", "直播", "live updates", "here's the latest"]
-  dedup_similarity_threshold: 0.7
   language: "zh-CN"
   briefing_style: "concise"
 
 dedup:
   method: "embedding"
   model: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-  similarity_threshold: 0.72
-  clustering_algorithm: "greedy"
   cache_embeddings: true
+  within_thread:
+    enabled: true
+    similarity_threshold: 0.88
+
+thread_clustering:
+  enabled: true
+  provider: "deepseek"
+  model: "deepseek-chat"
+  max_retries: 2
+  max_articles_per_call: 150
+  max_articles_per_thread: 12
+  max_refinement_rounds: 1
+
+ranking:
+  importance_floor: 0.15
+  keep_major_always: true
 
 summarizer:
   map:

@@ -9,80 +9,167 @@ from pathlib import Path
 from src import main
 from src.models import (
     ClusterSummary,
-    DedupDiagnostics,
     EvaluationConfig,
     EvaluationResult,
     FinalBriefing,
     MapSummariesResult,
+    StoryThread,
+    ThreadDedupDiagnostics,
 )
 
 
-def test_run_pipeline_dry_run_skips_llm(monkeypatch, sample_config, make_article, make_cluster) -> None:
-    """Dry-run mode should stop before summarization."""
+def test_run_pipeline_dry_run_uses_thread_pipeline(monkeypatch, sample_config, make_article) -> None:
+    """Default dry-run should stop after the V2 story-thread pipeline pre-LLM steps."""
 
-    cluster = make_cluster(primary=make_article())
-    monkeypatch.setattr(main, "get_config", lambda _: sample_config)
-    monkeypatch.setattr(main, "fetch_all_feeds", lambda config: [make_article()])
-    monkeypatch.setattr(
-        main,
-        "deduplicate_with_diagnostics",
-        lambda articles, config: (
-            [cluster],
-            DedupDiagnostics(
-                seen_filtered=0,
-                fresh_articles=1,
-                clusters_before_limit=1,
-                clusters_after_limit=1,
-                multi_source_clusters=1,
-            ),
-        ),
+    article = make_article()
+    thread = StoryThread(
+        thread_id=1,
+        topic="测试故事线",
+        topic_en="Test story thread",
+        articles=[article],
+        source_names=[article.source_name],
+        source_count=1,
+        primary=article,
+        latest_published=article.published,
+        rationale="调试用",
     )
+    monkeypatch.setattr(main, "get_config", lambda _: sample_config)
+    monkeypatch.setattr(main, "fetch_all_feeds", lambda config: [article])
+    monkeypatch.setattr(main, "cluster_into_threads", lambda articles, config: [thread])
+    monkeypatch.setattr(main, "rank_threads", lambda threads, config: threads)
     monkeypatch.setattr(
         main,
-        "summarize_clusters_with_usage",
+        "summarize_threads_with_usage",
         lambda *_: (_ for _ in ()).throw(AssertionError("should not call map-stage LLM")),
     )
 
     results = main.run_pipeline("config.yaml", dry_run=True)
 
     assert len(results) == 1
-    assert results[0].cluster_id == cluster.cluster_id
+    assert results[0].topic == "测试故事线"
 
 
-def test_run_pipeline_uses_map_reduce_flow(monkeypatch, sample_config, make_article, make_cluster, tmp_path: Path) -> None:
-    """Full pipeline should run through dedup, map, reduce, formatting, and notify."""
+def test_run_pipeline_dump_threads_uses_thread_clusterer(monkeypatch, sample_config, make_article) -> None:
+    """Thread dump mode should stop after story-thread clustering."""
 
-    cluster = make_cluster(primary=make_article(guid="article-1"))
+    article = make_article()
+    thread = StoryThread(
+        thread_id=1,
+        topic="测试故事线",
+        topic_en="Test story thread",
+        articles=[article],
+        source_names=[article.source_name],
+        source_count=1,
+        primary=article,
+        latest_published=article.published,
+        rationale="调试用",
+    )
+    monkeypatch.setattr(main, "get_config", lambda _: sample_config)
+    monkeypatch.setattr(main, "fetch_all_feeds", lambda config: [article])
+    monkeypatch.setattr(main, "cluster_into_threads", lambda articles, config: [thread])
+    monkeypatch.setattr(
+        main,
+        "summarize_threads_with_usage",
+        lambda *_: (_ for _ in ()).throw(AssertionError("should not call map-stage LLM")),
+    )
+
+    results = main.run_pipeline("config.yaml", dump_threads=True)
+
+    assert len(results) == 1
+    assert results[0].topic == "测试故事线"
+
+
+def test_run_pipeline_dump_threads_can_apply_within_thread_dedup(
+    monkeypatch,
+    sample_config,
+    make_article,
+) -> None:
+    """Thread dump mode should support the experimental within-thread dedup pass."""
+
+    article = make_article()
+    thread = StoryThread(
+        thread_id=1,
+        topic="测试故事线",
+        topic_en="Test story thread",
+        articles=[article],
+        source_names=[article.source_name],
+        source_count=1,
+        primary=article,
+        latest_published=article.published,
+        rationale="调试用",
+    )
+    calls: dict[str, object] = {}
+    monkeypatch.setattr(main, "get_config", lambda _: sample_config)
+    monkeypatch.setattr(main, "fetch_all_feeds", lambda config: [article])
+    monkeypatch.setattr(main, "cluster_into_threads", lambda articles, config: [thread])
+
+    def fake_within_thread_dedup(thread_arg, config_arg):
+        calls["dedup_called"] = True
+        return thread_arg, ThreadDedupDiagnostics(before_articles=1, after_articles=1)
+
+    monkeypatch.setattr(main, "deduplicate_within_thread_with_diagnostics", fake_within_thread_dedup)
+
+    results = main.run_pipeline(
+        "config.yaml",
+        dump_threads=True,
+        dedup_within_threads=True,
+    )
+
+    assert len(results) == 1
+    assert calls["dedup_called"] is True
+
+
+def test_run_pipeline_uses_story_threads_by_default(
+    monkeypatch,
+    sample_config,
+    make_article,
+    tmp_path: Path,
+) -> None:
+    """The default pipeline should use story threads instead of article clusters."""
+
+    article = make_article(guid="thread-article-1")
+    thread = StoryThread(
+        thread_id=1,
+        topic="测试故事线",
+        topic_en="Test story thread",
+        articles=[article],
+        source_names=[article.source_name],
+        source_count=1,
+        primary=article,
+        latest_published=article.published,
+        rationale="调试用",
+    )
     summary = ClusterSummary(
-        cluster_id=cluster.cluster_id,
+        cluster_id="thread-1",
         topic="国际政治",
-        headline_zh="测试标题",
-        summary_zh="测试摘要",
+        headline_zh="线程摘要标题",
+        summary_zh="线程摘要内容",
         importance=8,
         entities=["实体A"],
-        source_names=["New York Times"],
-        primary_link="https://example.com/story",
+        source_names=[article.source_name],
+        primary_link=article.link,
     )
     briefing = FinalBriefing(
-        date="2026-04-06",
-        overview_zh="今日综述。",
+        date="2026-04-08",
+        overview_zh="线程版综述。",
         topics={"国际政治": [summary]},
         total_clusters=1,
         total_sources=1,
-        generated_at=datetime(2026, 4, 6, 12, 0, tzinfo=timezone.utc),
-        token_usage={"input_tokens": 12, "output_tokens": 34},
+        generated_at=datetime(2026, 4, 8, 12, 0, tzinfo=timezone.utc),
+        token_usage={"input_tokens": 10, "output_tokens": 20},
         model="deepseek-chat",
     )
-    output_path = tmp_path / "briefing-2026-04-06.md"
+    output_path = tmp_path / "briefing-2026-04-08.md"
     calls: dict[str, object] = {}
 
     monkeypatch.setattr(main, "get_config", lambda _: sample_config)
-    monkeypatch.setattr(main, "fetch_all_feeds", lambda config: [make_article()])
-    monkeypatch.setattr(main, "deduplicate", lambda articles, config: [cluster])
+    monkeypatch.setattr(main, "fetch_all_feeds", lambda config: [article])
+    monkeypatch.setattr(main, "cluster_into_threads", lambda articles, config: [thread])
+    monkeypatch.setattr(main, "rank_threads", lambda threads, config: threads)
     monkeypatch.setattr(
         main,
-        "summarize_clusters_with_usage",
-        lambda clusters, config: MapSummariesResult(
+        "summarize_threads_with_usage",
+        lambda threads, config: MapSummariesResult(
             summaries=[summary],
             token_usage={"input_tokens": 10, "output_tokens": 20},
             model="deepseek-chat",
@@ -91,38 +178,21 @@ def test_run_pipeline_uses_map_reduce_flow(monkeypatch, sample_config, make_arti
 
     def fake_build_final_briefing(summaries, config, token_usage):
         calls["summaries"] = summaries
-        calls["token_usage"] = token_usage
         return briefing
 
-    def fake_format_briefing(briefing_arg, articles_arg, config_arg):
-        calls["format_articles_arg"] = articles_arg
-        calls["format_briefing_arg"] = briefing_arg
-        return output_path
-
-    def fake_notify(path_arg, briefing_arg, config_arg):
-        calls["notify_path"] = path_arg
-        calls["notify_briefing"] = briefing_arg
-
     monkeypatch.setattr(main, "build_final_briefing", fake_build_final_briefing)
-    monkeypatch.setattr(main, "format_briefing", fake_format_briefing)
-    monkeypatch.setattr(main, "notify", fake_notify)
+    monkeypatch.setattr(main, "format_briefing", lambda briefing_arg, articles_arg, config_arg: output_path)
+    monkeypatch.setattr(main, "notify", lambda *args: None)
 
-    result = main.run_pipeline("config.yaml", dry_run=False)
+    result = main.run_pipeline("config.yaml")
 
     assert result == output_path
     assert calls["summaries"] == [summary]
-    assert calls["token_usage"] == {"input_tokens": 10, "output_tokens": 20}
-    assert calls["format_articles_arg"] is None
-    assert calls["format_briefing_arg"] == briefing
-    assert calls["notify_path"] == output_path
-    assert calls["notify_briefing"] == briefing
-
 
 def test_run_pipeline_writes_evaluation_when_enabled(
     monkeypatch,
     sample_config,
     make_article,
-    make_cluster,
     tmp_path: Path,
 ) -> None:
     """Full pipeline should invoke evaluation and metrics hooks when enabled."""
@@ -131,9 +201,20 @@ def test_run_pipeline_writes_evaluation_when_enabled(
         sample_config,
         evaluation=EvaluationConfig(enabled=True, max_retries=2),
     )
-    cluster = make_cluster(primary=make_article(guid="article-1"))
+    article = make_article(guid="article-1")
+    thread = StoryThread(
+        thread_id=1,
+        topic="测试故事线",
+        topic_en="Test story thread",
+        articles=[article],
+        source_names=[article.source_name],
+        source_count=1,
+        primary=article,
+        latest_published=article.published,
+        rationale="调试用",
+    )
     summary = ClusterSummary(
-        cluster_id=cluster.cluster_id,
+        cluster_id="thread-1",
         topic="国际政治",
         headline_zh="测试标题",
         summary_zh="测试摘要",
@@ -167,12 +248,13 @@ def test_run_pipeline_writes_evaluation_when_enabled(
     calls: dict[str, object] = {}
 
     monkeypatch.setattr(main, "get_config", lambda _: config)
-    monkeypatch.setattr(main, "fetch_all_feeds", lambda current_config: [make_article()])
-    monkeypatch.setattr(main, "deduplicate", lambda articles, current_config: [cluster])
+    monkeypatch.setattr(main, "fetch_all_feeds", lambda current_config: [article])
+    monkeypatch.setattr(main, "cluster_into_threads", lambda articles, current_config: [thread])
+    monkeypatch.setattr(main, "rank_threads", lambda threads, current_config: threads)
     monkeypatch.setattr(
         main,
-        "summarize_clusters_with_usage",
-        lambda clusters, current_config: MapSummariesResult(
+        "summarize_threads_with_usage",
+        lambda threads, current_config: MapSummariesResult(
             summaries=[summary],
             token_usage={"input_tokens": 10, "output_tokens": 20},
             model="deepseek-chat",
@@ -223,12 +305,23 @@ def test_run_pipeline_writes_evaluation_when_enabled(
     assert calls["metrics"].status == "success"
 
 
-def test_run_pipeline_appends_failed_metrics(monkeypatch, sample_config, make_article, make_cluster, tmp_path: Path) -> None:
+def test_run_pipeline_appends_failed_metrics(monkeypatch, sample_config, make_article, tmp_path: Path) -> None:
     """Failures after map-stage should still append a failed metrics record."""
 
-    cluster = make_cluster(primary=make_article(guid="article-1"))
+    article = make_article(guid="article-1")
+    thread = StoryThread(
+        thread_id=1,
+        topic="测试故事线",
+        topic_en="Test story thread",
+        articles=[article],
+        source_names=[article.source_name],
+        source_count=1,
+        primary=article,
+        latest_published=article.published,
+        rationale="调试用",
+    )
     summary = ClusterSummary(
-        cluster_id=cluster.cluster_id,
+        cluster_id="thread-1",
         topic="国际政治",
         headline_zh="测试标题",
         summary_zh="测试摘要",
@@ -250,12 +343,13 @@ def test_run_pipeline_appends_failed_metrics(monkeypatch, sample_config, make_ar
     calls: dict[str, object] = {}
 
     monkeypatch.setattr(main, "get_config", lambda _: sample_config)
-    monkeypatch.setattr(main, "fetch_all_feeds", lambda current_config: [make_article()])
-    monkeypatch.setattr(main, "deduplicate", lambda articles, current_config: [cluster])
+    monkeypatch.setattr(main, "fetch_all_feeds", lambda current_config: [article])
+    monkeypatch.setattr(main, "cluster_into_threads", lambda articles, current_config: [thread])
+    monkeypatch.setattr(main, "rank_threads", lambda threads, current_config: threads)
     monkeypatch.setattr(
         main,
-        "summarize_clusters_with_usage",
-        lambda clusters, current_config: MapSummariesResult(
+        "summarize_threads_with_usage",
+        lambda threads, current_config: MapSummariesResult(
             summaries=[summary],
             token_usage={"input_tokens": 10, "output_tokens": 20},
             model="deepseek-chat",

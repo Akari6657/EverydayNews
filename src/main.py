@@ -3,31 +3,42 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter, defaultdict
 import logging
 from time import perf_counter
 from typing import Sequence
 
 from .config_loader import get_config
-from .dedup import deduplicate, deduplicate_with_diagnostics
+from .dedup import deduplicate_within_thread_with_diagnostics
 from .evaluator import append_run_metrics, evaluate_briefing, write_evaluation_result
 from .fetcher import fetch_all_feeds
 from .formatter import format_briefing
-from .models import AppConfig, Article, ArticleCluster, DedupDiagnostics, RunMetrics
+from .models import (
+    RunMetrics,
+    StoryThread,
+    ThreadDedupDiagnostics,
+)
 from .notifier import notify
-from .summarizer_map import summarize_clusters_with_usage
+from .ranker import rank_threads
+from .summarizer_map import summarize_threads_with_usage
 from .summarizer_reduce import build_final_briefing, count_reduce_candidates
+from .thread_clusterer import build_one_article_threads, cluster_into_threads
 
 LOGGER = logging.getLogger(__name__)
 
 
-def run_pipeline(config_path: str = "config.yaml", dry_run: bool = False):
+def run_pipeline(
+    config_path: str = "config.yaml",
+    dry_run: bool = False,
+    dump_threads: bool = False,
+    skip_clustering: bool = False,
+    dedup_within_threads: bool = False,
+):
     """Run one pipeline invocation."""
 
     started_at = perf_counter()
     config = None
     articles = []
-    clusters = []
+    threads = []
     map_result = None
     reduce_candidates = 0
     briefing = None
@@ -40,22 +51,49 @@ def run_pipeline(config_path: str = "config.yaml", dry_run: bool = False):
         current_stage = "fetch"
         articles = fetch_all_feeds(config)
         LOGGER.info("Fetched %s articles", len(articles))
-        current_stage = "dedup"
+        if dump_threads:
+            current_stage = "thread-clustering"
+            threads = (
+                build_one_article_threads(articles, config)
+                if skip_clustering
+                else cluster_into_threads(articles, config)
+            )
+            thread_diagnostics = None
+            if dedup_within_threads:
+                threads, thread_diagnostics = _dedup_threads_for_dump(threads, config)
+            _log_thread_dump(threads, thread_diagnostics)
+            return threads
+        current_stage = "thread-clustering"
+        threads = cluster_into_threads(articles, config)
+        LOGGER.info("After thread clustering: %s threads", len(threads))
+        thread_diagnostics = None
+        if config.dedup.within_thread_enabled:
+            threads, thread_diagnostics = _dedup_threads_for_dump(threads, config)
+            changed_threads = sum(
+                1
+                for item in thread_diagnostics.values()
+                if item.before_articles != item.after_articles
+            )
+            removed_articles = sum(
+                item.before_articles - item.after_articles
+                for item in thread_diagnostics.values()
+            )
+            LOGGER.info(
+                "After within-thread dedup: %s threads | changed_threads=%s | removed_articles=%s",
+                len(threads),
+                changed_threads,
+                removed_articles,
+            )
+        current_stage = "ranking"
+        threads = rank_threads(threads, config)
+        LOGGER.info("After thread ranking: %s threads", len(threads))
         if dry_run:
-            clusters, dedup_diagnostics = deduplicate_with_diagnostics(articles, config)
-        else:
-            dedup_diagnostics = None
-            clusters = deduplicate(articles, config)
-        LOGGER.info("After dedup: %s clusters", len(clusters))
-        if dry_run:
-            _log_dry_run_fetch_overview(config, articles)
-            _log_dry_run_dedup_overview(config, dedup_diagnostics, clusters)
-            _log_dry_run_clusters(clusters)
-            return clusters
+            _log_thread_dump(threads, thread_diagnostics)
+            return threads
         current_stage = "map"
-        map_result = summarize_clusters_with_usage(clusters, config)
+        map_result = summarize_threads_with_usage(threads, config)
         LOGGER.info(
-            "Map-stage summaries generated: %s clusters, tokens: %s",
+            "Thread map-stage summaries generated: %s threads, tokens: %s",
             len(map_result.summaries),
             map_result.token_usage,
         )
@@ -91,11 +129,11 @@ def run_pipeline(config_path: str = "config.yaml", dry_run: bool = False):
         failure_reason = str(exc)
         raise
     finally:
-        if config is not None and not dry_run:
+        if config is not None and not dry_run and not dump_threads:
             metrics = RunMetrics(
                 date=_metrics_date(briefing),
                 articles_fetched=len(articles),
-                clusters=len(clusters),
+                clusters=len(threads),
                 map_summaries_generated=len(map_result.summaries) if map_result else 0,
                 after_importance_filter=reduce_candidates,
                 final_items=briefing.total_clusters if briefing else 0,
@@ -146,29 +184,54 @@ def _parse_run_at(value: str) -> tuple[int, int]:
     return hour, minute
 
 
-def _log_dry_run_clusters(clusters: list[ArticleCluster]) -> None:
-    """Log dry-run cluster summaries."""
+def _log_thread_dump(
+    threads: list[StoryThread],
+    thread_diagnostics: dict[int, ThreadDedupDiagnostics] | None = None,
+) -> None:
+    """Log story-thread assignments for manual clustering review."""
 
-    if not clusters:
-        LOGGER.info("Dry run complete: no new articles found")
+    if not threads:
+        LOGGER.info("Thread dump complete: no articles available")
         return
-    for index, cluster in enumerate(clusters, start=1):
-        published = cluster.primary.published.strftime("%Y-%m-%d %H:%M UTC")
+    LOGGER.info(
+        "Thread dump overview | threads=%s | multi_source_threads=%s | singleton_threads=%s | max_articles_in_thread=%s",
+        len(threads),
+        sum(1 for thread in threads if thread.source_count >= 2),
+        sum(1 for thread in threads if len(thread.articles) == 1),
+        max(len(thread.articles) for thread in threads),
+    )
+    if thread_diagnostics:
         LOGGER.info(
-            "[%s] %s source(s) | %s article(s) | primary=%s/%s | %s | %s",
-            index,
-            cluster.source_count,
-            len(cluster.all_articles),
-            cluster.primary.source_name,
-            cluster.primary.category,
-            published,
-            cluster.primary.title,
+            "Thread dump within-thread dedup | changed_threads=%s | removed_articles=%s",
+            sum(1 for item in thread_diagnostics.values() if item.before_articles != item.after_articles),
+            sum(item.before_articles - item.after_articles for item in thread_diagnostics.values()),
         )
-        LOGGER.info("    sources: %s", " / ".join(cluster.source_names))
-        for position, article in enumerate(cluster.all_articles, start=1):
-            marker = "*" if position == 1 else "-"
+    for thread in threads:
+        diagnostics = thread_diagnostics.get(thread.thread_id) if thread_diagnostics else None
+        header = (
+            f"Thread [{thread.thread_id}] {thread.topic} ({thread.topic_en}) | "
+            f"{len(thread.articles)} articles | {thread.source_count} sources"
+        )
+        if diagnostics and diagnostics.before_articles != diagnostics.after_articles:
+            header += f" | within-thread dedup {diagnostics.before_articles}->{diagnostics.after_articles}"
+        LOGGER.info(
+            header,
+        )
+        LOGGER.info("  rationale: %s", thread.rationale)
+        if diagnostics:
+            for merge in diagnostics.merged_pairs:
+                LOGGER.info(
+                    "  ~ merged %.2f | keep=%s/%s | drop=%s/%s",
+                    merge.similarity,
+                    merge.kept_article.source_name,
+                    merge.kept_article.title,
+                    merge.removed_article.source_name,
+                    merge.removed_article.title,
+                )
+        for index, article in enumerate(thread.articles, start=1):
+            marker = "*" if index == 1 else "-"
             LOGGER.info(
-                "    %s %s/%s | %s",
+                "  %s %s/%s | %s",
                 marker,
                 article.source_name,
                 article.category,
@@ -176,70 +239,19 @@ def _log_dry_run_clusters(clusters: list[ArticleCluster]) -> None:
             )
 
 
-def _log_dry_run_fetch_overview(config: AppConfig, articles: list[Article]) -> None:
-    """Log how many post-filter articles each configured source contributed."""
-
-    total_feeds = sum(len(source.feeds) for source in config.sources)
-    LOGGER.info(
-        "Dry-run fetch overview | sources=%s | feeds=%s | retained_articles=%s | max_articles_per_source=%s",
-        len(config.sources),
-        total_feeds,
-        len(articles),
-        config.pipeline.max_articles_per_source,
-    )
-    counts_by_source = Counter(article.source_slug for article in articles)
-    categories_by_source: dict[str, Counter[str]] = defaultdict(Counter)
-    latest_by_source: dict[str, Article] = {}
-    for article in articles:
-        categories_by_source[article.source_slug][article.category] += 1
-        current_latest = latest_by_source.get(article.source_slug)
-        if current_latest is None or article.published > current_latest.published:
-            latest_by_source[article.source_slug] = article
-    for source in config.sources:
-        category_counts = categories_by_source.get(source.slug, Counter())
-        category_summary = ", ".join(
-            f"{category}={count}" for category, count in category_counts.most_common()
-        ) or "none"
-        LOGGER.info(
-            "Fetch kept | %s | articles=%s | categories=%s | latest=%s",
-            source.name,
-            counts_by_source.get(source.slug, 0),
-            category_summary,
-            latest_by_source[source.slug].published.strftime("%Y-%m-%d %H:%M UTC")
-            if source.slug in latest_by_source
-            else "n/a",
-        )
-
-
-def _log_dry_run_dedup_overview(
+def _dedup_threads_for_dump(
+    threads: list[StoryThread],
     config: AppConfig,
-    diagnostics: DedupDiagnostics | None,
-    clusters: list[ArticleCluster],
-) -> None:
-    """Log how the fetched article pool collapsed into deduplicated clusters."""
+) -> tuple[list[StoryThread], dict[int, ThreadDedupDiagnostics]]:
+    """Apply experimental within-thread near-duplicate cleanup for thread dumps."""
 
-    if diagnostics is None:
-        return
-    represented_articles = sum(len(cluster.all_articles) for cluster in clusters)
-    LOGGER.info(
-        "Dry-run dedup overview | method=%s | similarity_threshold=%.2f | seen_filtered=%s | fresh_articles=%s | clusters_before_limit=%s | clusters_after_limit=%s | multi_source_clusters=%s | represented_articles=%s",
-        config.dedup.method,
-        config.dedup.similarity_threshold,
-        diagnostics.seen_filtered,
-        diagnostics.fresh_articles,
-        diagnostics.clusters_before_limit,
-        diagnostics.clusters_after_limit,
-        diagnostics.multi_source_clusters,
-        represented_articles,
-    )
-    truncated = diagnostics.clusters_before_limit - diagnostics.clusters_after_limit
-    if truncated > 0:
-        LOGGER.info(
-            "Dry-run dedup cap applied | kept_top_clusters=%s | truncated_clusters=%s | cap=%s",
-            diagnostics.clusters_after_limit,
-            truncated,
-            config.pipeline.total_articles_for_summary,
-        )
+    deduplicated_threads: list[StoryThread] = []
+    diagnostics_by_original_id: dict[int, ThreadDedupDiagnostics] = {}
+    for thread in threads:
+        deduplicated, diagnostics = deduplicate_within_thread_with_diagnostics(thread, config)
+        deduplicated_threads.append(deduplicated)
+        diagnostics_by_original_id[thread.thread_id] = diagnostics
+    return deduplicated_threads, diagnostics_by_original_id
 
 
 def _total_tokens(primary: dict[str, int], extra: dict[str, int] | None = None) -> int:
@@ -286,6 +298,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", default="config.yaml", help="Path to config.yaml")
     parser.add_argument("--schedule", action="store_true", help="Run with APScheduler")
     parser.add_argument("--dry-run", action="store_true", help="Fetch and deduplicate without LLM calls")
+    parser.add_argument("--dump-threads", action="store_true", help="Fetch and print story-thread assignments")
+    parser.add_argument(
+        "--skip-clustering",
+        action="store_true",
+        help="With --dump-threads, force one-article-per-thread fallback",
+    )
+    parser.add_argument(
+        "--dedup-within-threads",
+        action="store_true",
+        help="With --dump-threads, apply strict within-thread near-duplicate cleanup",
+    )
     return parser
 
 
@@ -294,10 +317,20 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     _configure_logging()
     args = build_parser().parse_args(argv)
+    if args.skip_clustering and not args.dump_threads:
+        raise SystemExit("--skip-clustering requires --dump-threads")
+    if args.dedup_within_threads and not args.dump_threads:
+        raise SystemExit("--dedup-within-threads requires --dump-threads")
     if args.schedule:
         run_scheduled(args.config)
         return 0
-    run_pipeline(args.config, dry_run=args.dry_run)
+    run_pipeline(
+        args.config,
+        dry_run=args.dry_run,
+        dump_threads=args.dump_threads,
+        skip_clustering=args.skip_clustering,
+        dedup_within_threads=args.dedup_within_threads,
+    )
     return 0
 
 

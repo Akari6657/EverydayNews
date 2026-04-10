@@ -11,7 +11,6 @@ from string import Template
 from .models import (
     AppConfig,
     Article,
-    BriefingResult,
     ClusterSummary,
     FinalBriefing,
     JsonOutputConfig,
@@ -22,7 +21,7 @@ DEFAULT_TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "
 
 
 def format_briefing(
-    briefing: BriefingResult | FinalBriefing,
+    briefing: FinalBriefing,
     articles: list[Article] | None,
     config: AppConfig,
     template_path: str | Path | None = None,
@@ -38,7 +37,7 @@ def format_briefing(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     content = render_briefing(briefing, articles, config, template_path)
     output_path.write_text(content, encoding="utf-8")
-    if isinstance(briefing, FinalBriefing) and config.output.json.enabled:
+    if config.output.json.enabled:
         json_path = _resolve_output_path(
             config.root_dir,
             config.output.json,
@@ -51,7 +50,7 @@ def format_briefing(
 
 
 def render_briefing(
-    briefing: BriefingResult | FinalBriefing,
+    briefing: FinalBriefing,
     articles: list[Article] | None,
     config: AppConfig,
     template_path: str | Path | None = None,
@@ -66,7 +65,7 @@ def render_briefing(
 
 
 def _build_context(
-    briefing: BriefingResult | FinalBriefing,
+    briefing: FinalBriefing,
     articles: list[Article] | None,
     config: AppConfig,
 ) -> dict[str, str | int]:
@@ -99,35 +98,31 @@ def _render_template(template_file: Path, context: dict[str, str | int]) -> str:
         return Template(sanitized).safe_substitute(context).strip() + "\n"
 
 
-def _content_for_briefing(briefing: BriefingResult | FinalBriefing) -> str:
+def _content_for_briefing(briefing: FinalBriefing) -> str:
     """Return the Markdown body content for the given briefing type."""
 
-    if isinstance(briefing, FinalBriefing):
-        return _render_structured_markdown(briefing)
-    return briefing.content
+    return _render_structured_markdown(briefing)
 
 
 def _article_count_for_briefing(
-    briefing: BriefingResult | FinalBriefing,
+    briefing: FinalBriefing,
     articles: list[Article] | None,
 ) -> int:
     """Return the count displayed in the template header."""
 
-    if isinstance(briefing, FinalBriefing):
-        return briefing.total_clusters
-    return len(articles or [])
+    del articles
+    return briefing.total_clusters
 
 
 def _source_names_for_briefing(
-    briefing: BriefingResult | FinalBriefing,
+    briefing: FinalBriefing,
     config: AppConfig,
 ) -> str:
     """Return the sources displayed in the template header."""
 
-    if isinstance(briefing, FinalBriefing):
-        names = _collect_briefing_sources(briefing)
-        if names:
-            return "、".join(names)
+    names = _collect_briefing_sources(briefing)
+    if names:
+        return "、".join(names)
     return "、".join(source.name for source in config.sources)
 
 

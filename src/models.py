@@ -35,20 +35,19 @@ class PipelineConfig:
     importance_threshold: int
     max_items_per_topic: int
     exclude_summary_keywords: list[str]
-    dedup_similarity_threshold: float
     language: str
     briefing_style: str
 
 
 @dataclass(frozen=True)
 class DedupConfig:
-    """Deduplication strategy settings."""
+    """Within-thread near-duplicate cleanup settings."""
 
     method: str
     model: str
-    similarity_threshold: float
-    clustering_algorithm: str
     cache_embeddings: bool
+    within_thread_enabled: bool = False
+    within_thread_similarity_threshold: float = 0.88
 
 
 @dataclass(frozen=True)
@@ -152,6 +151,27 @@ class EvaluationConfig:
 
 
 @dataclass(frozen=True)
+class ThreadClusteringConfig:
+    """LLM-based story-thread clustering settings."""
+
+    enabled: bool
+    provider: str
+    model: str
+    max_retries: int
+    max_articles_per_call: int
+    max_articles_per_thread: int
+    max_refinement_rounds: int
+
+
+@dataclass(frozen=True)
+class RankingConfig:
+    """Thread-ranking settings for the experimental V2 pipeline."""
+
+    importance_floor: float
+    keep_major_always: bool
+
+
+@dataclass(frozen=True)
 class AppConfig:
     """Validated application configuration."""
 
@@ -164,6 +184,23 @@ class AppConfig:
     schedule: ScheduleConfig
     root_dir: Path
     config_path: Path
+    thread_clustering: ThreadClusteringConfig = field(
+        default_factory=lambda: ThreadClusteringConfig(
+            enabled=True,
+            provider="deepseek",
+            model="deepseek-chat",
+            max_retries=2,
+            max_articles_per_call=150,
+            max_articles_per_thread=12,
+            max_refinement_rounds=1,
+        )
+    )
+    ranking: RankingConfig = field(
+        default_factory=lambda: RankingConfig(
+            importance_floor=0.15,
+            keep_major_always=True,
+        )
+    )
     evaluation: EvaluationConfig = field(
         default_factory=lambda: EvaluationConfig(enabled=False, max_retries=2)
     )
@@ -188,53 +225,49 @@ class Article:
     guid: str
 
 
-@dataclass
-class ArticleCluster:
-    """A group of articles reporting the same event across sources."""
+@dataclass(frozen=True)
+class StoryThread:
+    """A group of articles reporting on the same ongoing story."""
 
-    cluster_id: str
+    thread_id: int
+    topic: str
+    topic_en: str
+    articles: list[Article]
+    source_names: list[str]
+    source_count: int
     primary: Article
-    duplicates: list[Article] = field(default_factory=list)
-    source_count: int = 0
-    source_names: list[str] = field(default_factory=list)
-
-    def __post_init__(self) -> None:
-        """Initialize metadata derived from cluster membership."""
-
-        self.refresh_metadata()
-
-    def add_duplicate(self, article: Article) -> None:
-        """Append a duplicate article and refresh metadata."""
-
-        self.duplicates.append(article)
-        self.refresh_metadata()
-
-    def refresh_metadata(self) -> None:
-        """Refresh source metadata from all current articles."""
-
-        distinct_names: list[str] = []
-        for article in self.all_articles:
-            if article.source_name not in distinct_names:
-                distinct_names.append(article.source_name)
-        self.source_names = distinct_names
-        self.source_count = len(distinct_names)
+    latest_published: datetime
+    rationale: str = ""
 
     @property
-    def all_articles(self) -> list[Article]:
-        """Return the primary article followed by duplicates."""
+    def is_multi_source(self) -> bool:
+        """Return whether the thread contains multiple sources."""
 
-        return [self.primary] + list(self.duplicates)
+        return self.source_count >= 2
+
+    @property
+    def is_major(self) -> bool:
+        """Return whether the thread spans at least three distinct sources."""
+
+        return self.source_count >= 3
 
 
 @dataclass(frozen=True)
-class DedupDiagnostics:
-    """Dry-run diagnostics describing the pre-LLM clustering stage."""
+class WithinThreadMerge:
+    """One article merged into a stricter within-thread near-duplicate group."""
 
-    seen_filtered: int
-    fresh_articles: int
-    clusters_before_limit: int
-    clusters_after_limit: int
-    multi_source_clusters: int
+    kept_article: Article
+    removed_article: Article
+    similarity: float
+
+
+@dataclass(frozen=True)
+class ThreadDedupDiagnostics:
+    """Debug information for within-thread near-duplicate cleanup."""
+
+    before_articles: int
+    after_articles: int
+    merged_pairs: list[WithinThreadMerge] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -275,16 +308,6 @@ class FinalBriefing:
     generated_at: datetime
     token_usage: dict[str, int]
     model: str
-
-
-@dataclass(frozen=True)
-class BriefingResult:
-    """Final model-generated briefing payload."""
-
-    content: str
-    model: str
-    token_usage: dict[str, int]
-    generated_at: datetime
 
 
 @dataclass(frozen=True)

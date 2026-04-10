@@ -10,7 +10,6 @@ import pytest
 from src.models import (
     AppConfig,
     Article,
-    ArticleCluster,
     DedupConfig,
     EmailOutputConfig,
     FeedConfig,
@@ -19,12 +18,14 @@ from src.models import (
     MarkdownOutputConfig,
     OutputConfig,
     PipelineConfig,
+    RankingConfig,
     ScheduleConfig,
     SourceConfig,
     SummarizerConfig,
     SummarizerMapConfig,
     SummarizerReduceConfig,
     TelegramOutputConfig,
+    ThreadClusteringConfig,
 )
 
 
@@ -51,16 +52,15 @@ def sample_config(tmp_path: Path) -> AppConfig:
             importance_threshold=4,
             max_items_per_topic=4,
             exclude_summary_keywords=["最新动态", "持续更新"],
-            dedup_similarity_threshold=0.7,
             language="zh-CN",
             briefing_style="concise",
         ),
         dedup=DedupConfig(
             method="difflib",
             model="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-            similarity_threshold=0.7,
-            clustering_algorithm="greedy",
             cache_embeddings=True,
+            within_thread_enabled=False,
+            within_thread_similarity_threshold=0.88,
         ),
         summarizer=SummarizerConfig(
             map=SummarizerMapConfig(batch_size=5, max_retries=2),
@@ -93,6 +93,19 @@ def sample_config(tmp_path: Path) -> AppConfig:
         schedule=ScheduleConfig(timezone="Asia/Shanghai", run_at="08:00"),
         root_dir=tmp_path,
         config_path=tmp_path / "config.yaml",
+        thread_clustering=ThreadClusteringConfig(
+            enabled=True,
+            provider="deepseek",
+            model="deepseek-chat",
+            max_retries=2,
+            max_articles_per_call=150,
+            max_articles_per_thread=12,
+            max_refinement_rounds=1,
+        ),
+        ranking=RankingConfig(
+            importance_floor=0.15,
+            keep_major_always=True,
+        ),
     )
 
 
@@ -116,19 +129,3 @@ def make_article():
         return Article(**values)
 
     return _make_article
-
-
-@pytest.fixture
-def make_cluster(make_article):
-    """Create article clusters for map-stage summarizer tests."""
-
-    def _make_cluster(cluster_id: str = "cluster-1", primary: Article | None = None, duplicates=None) -> ArticleCluster:
-        primary_article = primary or make_article(guid=f"{cluster_id}-primary")
-        duplicate_articles = list(duplicates or [])
-        return ArticleCluster(
-            cluster_id=cluster_id,
-            primary=primary_article,
-            duplicates=duplicate_articles,
-        )
-
-    return _make_cluster
