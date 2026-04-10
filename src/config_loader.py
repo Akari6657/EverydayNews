@@ -10,7 +10,6 @@ from .models import (
     AppConfig,
     DedupConfig,
     EmailOutputConfig,
-    EvaluationConfig,
     FeedConfig,
     JsonOutputConfig,
     LLMConfig,
@@ -30,6 +29,9 @@ from .models import (
 
 class ConfigError(ValueError):
     """Raised when configuration is missing or invalid."""
+
+
+_MISSING = object()
 
 
 def get_config(
@@ -56,7 +58,6 @@ def get_config(
         config_path=config_file,
         thread_clustering=_parse_thread_clustering(payload),
         ranking=_parse_ranking(payload),
-        evaluation=_parse_evaluation(payload),
     )
 
 
@@ -105,7 +106,7 @@ def _load_yaml(config_path: Path) -> dict[str, Any]:
 def _parse_sources(payload: dict[str, Any]) -> list[SourceConfig]:
     """Parse source definitions."""
 
-    raw_sources = _require_mapping_list(payload, "sources")
+    raw_sources = _mapping_list(payload, "sources")
     sources = [_parse_source(source) for source in raw_sources]
     if not sources:
         raise ConfigError("At least one source must be configured")
@@ -115,17 +116,17 @@ def _parse_sources(payload: dict[str, Any]) -> list[SourceConfig]:
 def _parse_source(raw_source: dict[str, Any]) -> SourceConfig:
     """Parse a single source entry."""
 
-    name = _require_string(raw_source, "name")
-    slug = _require_string(raw_source, "slug")
-    raw_feeds = _require_mapping_list(raw_source, "feeds")
+    name = _string(raw_source, "name")
+    slug = _string(raw_source, "slug")
+    raw_feeds = _mapping_list(raw_source, "feeds")
     if not raw_feeds:
         raise ConfigError(f"Source '{slug}' must define at least one feed")
     feeds = [
         FeedConfig(
-            url=_require_string(feed, "url"),
-            category=_require_string(feed, "category"),
-            exclude_keywords=_optional_string_list(feed, "exclude_keywords"),
-            exclude_categories=_optional_string_list(feed, "exclude_categories"),
+            url=_string(feed, "url"),
+            category=_string(feed, "category"),
+            exclude_keywords=_string_list(feed, "exclude_keywords"),
+            exclude_categories=_string_list(feed, "exclude_categories"),
         )
         for feed in raw_feeds
     ]
@@ -135,82 +136,54 @@ def _parse_source(raw_source: dict[str, Any]) -> SourceConfig:
 def _parse_pipeline(payload: dict[str, Any]) -> PipelineConfig:
     """Parse pipeline settings."""
 
-    section = _require_mapping(payload, "pipeline")
+    section = _mapping(payload, "pipeline")
     return PipelineConfig(
-        max_articles_per_source=_require_int(section, "max_articles_per_source"),
-        total_articles_for_summary=_require_int(section, "total_articles_for_summary"),
-        importance_threshold=_bounded_int_with_default(
-            section,
-            "importance_threshold",
-            default=4,
-            minimum=0,
-            maximum=10,
-        ),
-        max_items_per_topic=_positive_int_with_default(section, "max_items_per_topic", 4),
-        exclude_summary_keywords=_optional_string_list(section, "exclude_summary_keywords"),
-        language=_require_string(section, "language"),
-        briefing_style=_require_string(section, "briefing_style"),
+        max_articles_per_source=_int(section, "max_articles_per_source"),
+        total_articles_for_summary=_int(section, "total_articles_for_summary"),
+        importance_threshold=_int(section, "importance_threshold", default=4, minimum=0, maximum=10),
+        max_items_per_topic=_int(section, "max_items_per_topic", default=4, positive=True),
+        exclude_summary_keywords=_string_list(section, "exclude_summary_keywords"),
+        language=_string(section, "language"),
+        briefing_style=_string(section, "briefing_style"),
     )
 
 
 def _parse_dedup(payload: dict[str, Any]) -> DedupConfig:
     """Parse within-thread near-duplicate settings with sensible defaults."""
 
-    section = payload.get("dedup")
-    if section is None:
+    section = _mapping(payload, "dedup", required=False)
+    if not section:
         return DedupConfig(
             method="embedding",
             model="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
             cache_embeddings=True,
-            within_thread_enabled=False,
             within_thread_similarity_threshold=0.88,
         )
-    if not isinstance(section, dict):
-        raise ConfigError("'dedup' must be a mapping")
-    method = str(section.get("method", "embedding")).strip()
+    method = _string(section, "method", "embedding")
     if method not in {"embedding", "difflib"}:
         raise ConfigError("'dedup.method' must be either 'embedding' or 'difflib'")
-    cache_embeddings = section.get("cache_embeddings", True)
-    if not isinstance(cache_embeddings, bool):
-        raise ConfigError("'dedup.cache_embeddings' must be a boolean")
-    within_thread = section.get("within_thread", {})
-    if within_thread is None:
-        within_thread = {}
-    if not isinstance(within_thread, dict):
-        raise ConfigError("'dedup.within_thread' must be a mapping")
+    within_thread = _mapping(section, "within_thread", required=False)
     return DedupConfig(
         method=method,
-        model=str(
-            section.get(
-                "model",
-                "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
-            )
-        ).strip(),
-        cache_embeddings=cache_embeddings,
-        within_thread_enabled=_require_bool_with_default(within_thread, "enabled", False),
-        within_thread_similarity_threshold=float(within_thread.get("similarity_threshold", 0.88)),
+        model=_string(section, "model", "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"),
+        cache_embeddings=_bool(section, "cache_embeddings", True),
+        within_thread_similarity_threshold=_float(within_thread, "similarity_threshold", 0.88),
     )
 
 
 def _parse_summarizer(payload: dict[str, Any]) -> SummarizerConfig:
     """Parse map-reduce summarizer settings with defaults."""
 
-    section = payload.get("summarizer", {})
-    if not isinstance(section, dict):
-        raise ConfigError("'summarizer' must be a mapping")
-    map_section = section.get("map", {})
-    reduce_section = section.get("reduce", {})
-    if not isinstance(map_section, dict):
-        raise ConfigError("'summarizer.map' must be a mapping")
-    if not isinstance(reduce_section, dict):
-        raise ConfigError("'summarizer.reduce' must be a mapping")
+    section = _mapping(payload, "summarizer", required=False)
+    map_section = _mapping(section, "map", required=False)
+    reduce_section = _mapping(section, "reduce", required=False)
     map_config = SummarizerMapConfig(
-        batch_size=_positive_int(map_section.get("batch_size", 5), "summarizer.map.batch_size"),
-        max_retries=_positive_int(map_section.get("max_retries", 2), "summarizer.map.max_retries"),
+        batch_size=_int(map_section, "batch_size", default=5, positive=True),
+        max_retries=_int(map_section, "max_retries", default=2, positive=True),
     )
     reduce_config = SummarizerReduceConfig(
-        top_k=_positive_int(reduce_section.get("top_k", 30), "summarizer.reduce.top_k"),
-        max_retries=_positive_int(reduce_section.get("max_retries", 2), "summarizer.reduce.max_retries"),
+        top_k=_int(reduce_section, "top_k", default=30, positive=True),
+        max_retries=_int(reduce_section, "max_retries", default=2, positive=True),
     )
     return SummarizerConfig(map=map_config, reduce=reduce_config)
 
@@ -218,38 +191,29 @@ def _parse_summarizer(payload: dict[str, Any]) -> SummarizerConfig:
 def _parse_llm(payload: dict[str, Any]) -> LLMConfig:
     """Parse LLM settings."""
 
-    section = _require_mapping(payload, "llm")
-    provider = _require_string(section, "provider")
+    section = _mapping(payload, "llm")
+    provider = _string(section, "provider")
     if provider != "deepseek":
         raise ConfigError("Only the 'deepseek' provider is currently supported")
     return LLMConfig(
         provider=provider,
-        model=_require_string(section, "model"),
-        base_url=_require_string(section, "base_url"),
-        api_key_env=_require_string(section, "api_key_env"),
-        max_tokens=_require_int(section, "max_tokens"),
-        temperature=_require_float(section, "temperature"),
+        model=_string(section, "model"),
+        base_url=_string(section, "base_url"),
+        api_key_env=_string(section, "api_key_env"),
+        max_tokens=_int(section, "max_tokens"),
+        temperature=_float(section, "temperature"),
     )
 
 
 def _parse_thread_clustering(payload: dict[str, Any]) -> ThreadClusteringConfig:
     """Parse optional story-thread clustering settings."""
 
-    llm_section = payload.get("llm", {})
-    default_provider = (
-        str(llm_section.get("provider", "deepseek")).strip()
-        if isinstance(llm_section, dict)
-        else "deepseek"
-    )
-    default_model = (
-        str(llm_section.get("model", "deepseek-chat")).strip()
-        if isinstance(llm_section, dict)
-        else "deepseek-chat"
-    )
-    section = payload.get("thread_clustering")
-    if section is None:
+    llm_section = _mapping(payload, "llm", required=False)
+    default_provider = _string(llm_section, "provider", "deepseek")
+    default_model = _string(llm_section, "model", "deepseek-chat")
+    section = _mapping(payload, "thread_clustering", required=False)
+    if not section:
         return ThreadClusteringConfig(
-            enabled=True,
             provider=default_provider,
             model=default_model,
             max_retries=2,
@@ -257,56 +221,39 @@ def _parse_thread_clustering(payload: dict[str, Any]) -> ThreadClusteringConfig:
             max_articles_per_thread=12,
             max_refinement_rounds=1,
         )
-    if not isinstance(section, dict):
-        raise ConfigError("'thread_clustering' must be a mapping")
-    provider = str(section.get("provider", default_provider)).strip()
+    provider = _string(section, "provider", default_provider)
     if provider != "deepseek":
         raise ConfigError("Only the 'deepseek' provider is currently supported for thread clustering")
     return ThreadClusteringConfig(
-        enabled=_require_bool_with_default(section, "enabled", True),
         provider=provider,
-        model=_require_string_with_default(section, "model", default_model),
-        max_retries=_positive_int(
-            section.get("max_retries", 2),
-            "thread_clustering.max_retries",
-        ),
-        max_articles_per_call=_positive_int(
-            section.get("max_articles_per_call", 150),
-            "thread_clustering.max_articles_per_call",
-        ),
-        max_articles_per_thread=_positive_int(
-            section.get("max_articles_per_thread", 12),
-            "thread_clustering.max_articles_per_thread",
-        ),
-        max_refinement_rounds=_positive_int(
-            section.get("max_refinement_rounds", 1),
-            "thread_clustering.max_refinement_rounds",
-        ),
+        model=_string(section, "model", default_model),
+        max_retries=_int(section, "max_retries", default=2, positive=True),
+        max_articles_per_call=_int(section, "max_articles_per_call", default=150, positive=True),
+        max_articles_per_thread=_int(section, "max_articles_per_thread", default=12, positive=True),
+        max_refinement_rounds=_int(section, "max_refinement_rounds", default=1, positive=True),
     )
 
 
 def _parse_ranking(payload: dict[str, Any]) -> RankingConfig:
     """Parse optional thread-ranking settings."""
 
-    section = payload.get("ranking")
-    if section is None:
+    section = _mapping(payload, "ranking", required=False)
+    if not section:
         return RankingConfig(importance_floor=0.15, keep_major_always=True)
-    if not isinstance(section, dict):
-        raise ConfigError("'ranking' must be a mapping")
     return RankingConfig(
-        importance_floor=float(section.get("importance_floor", 0.15)),
-        keep_major_always=_require_bool_with_default(section, "keep_major_always", True),
+        importance_floor=_float(section, "importance_floor", 0.15),
+        keep_major_always=_bool(section, "keep_major_always", True),
     )
 
 
 def _parse_output(payload: dict[str, Any]) -> OutputConfig:
     """Parse output channel settings."""
 
-    section = _require_mapping(payload, "output")
-    markdown = _parse_markdown_output(_require_mapping(section, "markdown"))
-    json_output = _parse_json_output(section.get("json"), markdown)
-    email = _parse_email_output(_require_mapping(section, "email"))
-    telegram = _parse_telegram_output(_require_mapping(section, "telegram"))
+    section = _mapping(payload, "output")
+    markdown = _parse_markdown_output(_mapping(section, "markdown"))
+    json_output = _parse_json_output(_mapping(section, "json", required=False), markdown)
+    email = _parse_email_output(_mapping(section, "email"))
+    telegram = _parse_telegram_output(_mapping(section, "telegram"))
     return OutputConfig(markdown=markdown, json=json_output, email=email, telegram=telegram)
 
 
@@ -314,45 +261,39 @@ def _parse_markdown_output(section: dict[str, Any]) -> MarkdownOutputConfig:
     """Parse markdown output settings."""
 
     return MarkdownOutputConfig(
-        enabled=_require_bool(section, "enabled"),
-        directory=_require_string(section, "directory"),
-        group_by_month=_require_bool_with_default(section, "group_by_month", True),
+        enabled=_bool(section, "enabled"),
+        directory=_string(section, "directory"),
+        group_by_month=_bool(section, "group_by_month", True),
     )
 
 
 def _parse_json_output(
-    section: Any,
+    section: dict[str, Any],
     markdown: MarkdownOutputConfig,
 ) -> JsonOutputConfig:
     """Parse JSON output settings, defaulting to a structured sibling directory."""
 
-    if section is None:
+    if not section:
         return JsonOutputConfig(
             enabled=True,
             directory=_default_json_directory(markdown.directory),
             group_by_month=markdown.group_by_month,
         )
-    if not isinstance(section, dict):
-        raise ConfigError("'output.json' must be a mapping")
     return JsonOutputConfig(
-        enabled=_require_bool_with_default(section, "enabled", True),
-        directory=_require_string_with_default(
-            section,
-            "directory",
-            _default_json_directory(markdown.directory),
-        ),
-        group_by_month=_require_bool_with_default(section, "group_by_month", markdown.group_by_month),
+        enabled=_bool(section, "enabled", True),
+        directory=_string(section, "directory", _default_json_directory(markdown.directory)),
+        group_by_month=_bool(section, "group_by_month", markdown.group_by_month),
     )
 
 
 def _parse_email_output(section: dict[str, Any]) -> EmailOutputConfig:
     """Parse email output settings."""
 
-    recipients = _require_string_list(section, "recipients")
+    recipients = _string_list(section, "recipients")
     return EmailOutputConfig(
-        enabled=_require_bool(section, "enabled"),
+        enabled=_bool(section, "enabled"),
         smtp_host=str(section.get("smtp_host", "")),
-        smtp_port=_require_int(section, "smtp_port"),
+        smtp_port=_int(section, "smtp_port"),
         sender=str(section.get("sender", "")),
         recipients=recipients,
     )
@@ -362,47 +303,37 @@ def _parse_telegram_output(section: dict[str, Any]) -> TelegramOutputConfig:
     """Parse Telegram output settings."""
 
     return TelegramOutputConfig(
-        enabled=_require_bool(section, "enabled"),
-        bot_token_env=_require_string(section, "bot_token_env"),
-        chat_id_env=_require_string(section, "chat_id_env"),
+        enabled=_bool(section, "enabled"),
+        bot_token_env=_string(section, "bot_token_env"),
+        chat_id_env=_string(section, "chat_id_env"),
     )
 
 
 def _parse_schedule(payload: dict[str, Any]) -> ScheduleConfig:
     """Parse schedule settings."""
 
-    section = _require_mapping(payload, "schedule")
+    section = _mapping(payload, "schedule")
     return ScheduleConfig(
-        timezone=_require_string(section, "timezone"),
-        run_at=_require_string(section, "run_at"),
+        timezone=_string(section, "timezone"),
+        run_at=_string(section, "run_at"),
     )
 
 
-def _parse_evaluation(payload: dict[str, Any]) -> EvaluationConfig:
-    """Parse optional evaluation settings with conservative defaults."""
+def _mapping(payload: dict[str, Any], key: str, required: bool = True) -> dict[str, Any]:
+    """Return a mapping section or raise when the value is invalid."""
 
-    section = payload.get("evaluation")
-    if section is None:
-        return EvaluationConfig(enabled=False, max_retries=2)
-    if not isinstance(section, dict):
-        raise ConfigError("'evaluation' must be a mapping")
-    return EvaluationConfig(
-        enabled=_require_bool_with_default(section, "enabled", False),
-        max_retries=_positive_int(section.get("max_retries", 2), "evaluation.max_retries"),
-    )
-
-
-def _require_mapping(payload: dict[str, Any], key: str) -> dict[str, Any]:
-    """Require a dictionary at the given key."""
-
-    value = payload.get(key)
+    value = payload.get(key, _MISSING)
+    if value is _MISSING or value is None:
+        if required:
+            raise ConfigError(f"'{key}' must be a mapping")
+        return {}
     if not isinstance(value, dict):
         raise ConfigError(f"'{key}' must be a mapping")
     return value
 
 
-def _require_mapping_list(payload: dict[str, Any], key: str) -> list[dict[str, Any]]:
-    """Require a list of dictionaries at the given key."""
+def _mapping_list(payload: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    """Return a list of mapping items or raise when invalid."""
 
     value = payload.get(key)
     if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
@@ -410,25 +341,17 @@ def _require_mapping_list(payload: dict[str, Any], key: str) -> list[dict[str, A
     return value
 
 
-def _require_string(payload: dict[str, Any], key: str) -> str:
-    """Require a non-empty string."""
+def _string(payload: dict[str, Any], key: str, default: str | object = _MISSING) -> str:
+    """Return a non-empty string field, optionally using a default."""
 
-    value = payload.get(key)
-    if not isinstance(value, str) or not value.strip():
+    value = payload.get(key, default)
+    if value is _MISSING or not isinstance(value, str) or not value.strip():
         raise ConfigError(f"'{key}' must be a non-empty string")
     return value.strip()
 
 
-def _require_string_with_default(payload: dict[str, Any], key: str, default: str) -> str:
-    """Require a string when present, otherwise use a default."""
-
-    if key not in payload:
-        return default
-    return _require_string(payload, key)
-
-
-def _require_string_list(payload: dict[str, Any], key: str) -> list[str]:
-    """Require a list of strings."""
+def _string_list(payload: dict[str, Any], key: str) -> list[str]:
+    """Return a list of non-empty strings."""
 
     value = payload.get(key, [])
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
@@ -436,79 +359,42 @@ def _require_string_list(payload: dict[str, Any], key: str) -> list[str]:
     return [item.strip() for item in value if item.strip()]
 
 
-def _optional_string_list(payload: dict[str, Any], key: str) -> list[str]:
-    """Return an optional list of strings, defaulting to an empty list."""
+def _int(
+    payload: dict[str, Any],
+    key: str,
+    default: int | object = _MISSING,
+    *,
+    positive: bool = False,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int:
+    """Return a validated integer field."""
 
-    if key not in payload:
-        return []
-    return _require_string_list(payload, key)
-
-
-def _require_int(payload: dict[str, Any], key: str) -> int:
-    """Require an integer value."""
-
-    value = payload.get(key)
-    if isinstance(value, bool) or not isinstance(value, int):
+    value = payload.get(key, default)
+    if value is _MISSING or isinstance(value, bool) or not isinstance(value, int):
         raise ConfigError(f"'{key}' must be an integer")
+    if positive and value <= 0:
+        raise ConfigError(f"'{key}' must be a positive integer")
+    if minimum is not None and value < minimum or maximum is not None and value > maximum:
+        raise ConfigError(f"'{key}' must be between {minimum} and {maximum}")
     return value
 
 
-def _require_float(payload: dict[str, Any], key: str) -> float:
-    """Require a float-compatible value."""
+def _float(payload: dict[str, Any], key: str, default: float | object = _MISSING) -> float:
+    """Return a float-compatible field."""
 
-    value = payload.get(key)
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    value = payload.get(key, default)
+    if value is _MISSING or isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ConfigError(f"'{key}' must be a number")
     return float(value)
 
 
-def _require_bool(payload: dict[str, Any], key: str) -> bool:
-    """Require a boolean value."""
+def _bool(payload: dict[str, Any], key: str, default: bool | object = _MISSING) -> bool:
+    """Return a boolean field."""
 
-    value = payload.get(key)
-    if not isinstance(value, bool):
+    value = payload.get(key, default)
+    if value is _MISSING or not isinstance(value, bool):
         raise ConfigError(f"'{key}' must be a boolean")
-    return value
-
-
-def _require_bool_with_default(payload: dict[str, Any], key: str, default: bool) -> bool:
-    """Require a boolean when present, otherwise use a default."""
-
-    if key not in payload:
-        return default
-    return _require_bool(payload, key)
-
-
-def _positive_int(value: Any, key: str) -> int:
-    """Require a positive integer value."""
-
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-        raise ConfigError(f"'{key}' must be a positive integer")
-    return value
-
-
-def _positive_int_with_default(payload: dict[str, Any], key: str, default: int) -> int:
-    """Require a positive integer when present, otherwise use a default."""
-
-    if key not in payload:
-        return default
-    return _positive_int(payload.get(key), key)
-
-
-def _bounded_int_with_default(
-    payload: dict[str, Any],
-    key: str,
-    default: int,
-    minimum: int,
-    maximum: int,
-) -> int:
-    """Require an integer within a closed range when present, else use a default."""
-
-    if key not in payload:
-        return default
-    value = _require_int(payload, key)
-    if value < minimum or value > maximum:
-        raise ConfigError(f"'{key}' must be between {minimum} and {maximum}")
     return value
 
 

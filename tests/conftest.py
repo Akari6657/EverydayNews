@@ -59,7 +59,6 @@ def sample_config(tmp_path: Path) -> AppConfig:
             method="difflib",
             model="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
             cache_embeddings=True,
-            within_thread_enabled=False,
             within_thread_similarity_threshold=0.88,
         ),
         summarizer=SummarizerConfig(
@@ -94,7 +93,6 @@ def sample_config(tmp_path: Path) -> AppConfig:
         root_dir=tmp_path,
         config_path=tmp_path / "config.yaml",
         thread_clustering=ThreadClusteringConfig(
-            enabled=True,
             provider="deepseek",
             model="deepseek-chat",
             max_retries=2,

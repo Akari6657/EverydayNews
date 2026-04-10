@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import logging
-import os
 import re
 import time
 from collections import Counter
-from datetime import datetime, timezone
 from typing import Any, Sequence
 
+from .llm_utils import create_client, extract_response_text, load_json_payload
 from .models import AppConfig, Article, StoryThread
 from .prompts import (
     THREAD_CLUSTERING_JSON_RETRY_SUFFIX,
@@ -27,7 +25,6 @@ def cluster_into_threads(
     articles: list[Article],
     config: AppConfig,
     client: Any | None = None,
-    now: datetime | None = None,
 ) -> list[StoryThread]:
     """Group fetched articles into story threads via one LLM clustering pass."""
 
@@ -36,15 +33,11 @@ def cluster_into_threads(
     wrapper_threads, clusterable_articles = _extract_wrapper_threads(articles, config)
     if not clusterable_articles:
         return _renumber_threads(_sort_threads(wrapper_threads))
-    if not config.thread_clustering.enabled:
-        LOGGER.warning("Thread clustering disabled in config; using one-article-per-thread fallback")
-        threads = _one_per_thread_fallback(clusterable_articles, config)
-        return _renumber_threads(_sort_threads(threads + wrapper_threads))
     if len(clusterable_articles) > config.thread_clustering.max_articles_per_call:
-        threads = _cluster_large_article_set(clusterable_articles, config, client=client, now=now)
-        refined = _refine_threads(threads, config, client or _create_client(config))
+        threads = _cluster_large_article_set(clusterable_articles, config, client=client)
+        refined = _refine_threads(threads, config, client or create_client(config))
         return _renumber_threads(_sort_threads(refined + wrapper_threads))
-    llm_client = client or _create_client(config)
+    llm_client = client or create_client(config)
     raw_threads = _request_threads_payload(
         llm_client,
         config,
@@ -61,20 +54,10 @@ def cluster_into_threads(
     return _renumber_threads(_sort_threads(refined_threads + wrapper_threads))
 
 
-def build_one_article_threads(
-    articles: list[Article],
-    config: AppConfig,
-) -> list[StoryThread]:
-    """Return one story thread per article for debugging or fallback use."""
-
-    return _one_per_thread_fallback(articles, config)
-
-
 def _cluster_large_article_set(
     articles: list[Article],
     config: AppConfig,
     client: Any | None,
-    now: datetime | None,
 ) -> list[StoryThread]:
     """Cluster large article sets by chunking and renumbering the results."""
 
@@ -86,7 +69,7 @@ def _cluster_large_article_set(
     )
     threads: list[StoryThread] = []
     for chunk in _chunked(articles, max_per_call):
-        threads.extend(cluster_into_threads(chunk, config, client=client, now=now))
+        threads.extend(cluster_into_threads(chunk, config, client=client))
     return _renumber_threads(_sort_threads(threads))
 
 
@@ -109,11 +92,11 @@ def _request_threads_payload(
             time.sleep(2**attempt)
             continue
 
-        raw_text = _extract_response_text(response)
+        raw_text = extract_response_text(response)
         try:
-            payload = _load_json_payload(raw_text)
+            payload = load_json_payload(raw_text)
             return _extract_threads(payload)
-        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        except (ValueError, TypeError) as exc:
             if attempt == config.thread_clustering.max_retries - 1:
                 LOGGER.error("%s failed after invalid JSON retries: %s", stage_label, exc)
                 return None
@@ -542,59 +525,7 @@ def _meaningful_tokens(title: str) -> list[str]:
         for token in title.split()
         if len(token) >= 4 and token not in stopwords
     ]
-
-
-def _load_json_payload(raw_text: str) -> Any:
-    """Load JSON, tolerating fenced blocks or surrounding text."""
-
-    stripped = raw_text.strip()
-    candidates = [stripped]
-    if stripped.startswith("```"):
-        lines = stripped.splitlines()
-        if len(lines) >= 3:
-            candidates.append("\n".join(lines[1:-1]).strip())
-    start = stripped.find("{")
-    end = stripped.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        candidates.append(stripped[start : end + 1].strip())
-    last_error: json.JSONDecodeError | None = None
-    for candidate in candidates:
-        if not candidate:
-            continue
-        try:
-            return json.loads(candidate)
-        except json.JSONDecodeError as exc:
-            last_error = exc
-    if last_error is not None:
-        raise last_error
-    raise json.JSONDecodeError("No JSON content found", raw_text, 0)
-
-
-def _extract_response_text(response: Any) -> str:
-    """Extract assistant text from an OpenAI-compatible response object."""
-
-    choices = getattr(response, "choices", [])
-    if not choices:
-        raise ValueError("LLM response did not contain any choices")
-    message = getattr(choices[0], "message", None)
-    content = getattr(message, "content", "")
-    if not isinstance(content, str) or not content.strip():
-        raise ValueError("LLM response content was empty")
-    return content
-
-
 def _chunked(items: Sequence[Article], size: int) -> list[list[Article]]:
     """Split articles into equally sized chunks."""
 
     return [list(items[index : index + size]) for index in range(0, len(items), size)]
-
-
-def _create_client(config: AppConfig) -> Any:
-    """Create an OpenAI-compatible client for DeepSeek."""
-
-    from openai import OpenAI
-
-    api_key = os.getenv(config.llm.api_key_env)
-    if not api_key:
-        raise RuntimeError(f"Environment variable '{config.llm.api_key_env}' is required")
-    return OpenAI(api_key=api_key, base_url=config.llm.base_url)

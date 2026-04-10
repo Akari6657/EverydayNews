@@ -76,11 +76,9 @@ dedup:
   model: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
   cache_embeddings: true
   within_thread:
-    enabled: true
     similarity_threshold: 0.88
 
 thread_clustering:
-  enabled: true
   provider: "deepseek"
   model: "deepseek-chat"
   max_retries: 2
@@ -100,9 +98,6 @@ summarizer:
     top_k: 15
     max_retries: 2
 
-evaluation:
-  enabled: true
-  max_retries: 2
 
 llm:
   provider: "deepseek"

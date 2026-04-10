@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
-import json
 import logging
-import os
 import time
 from datetime import timezone
 from typing import Any, Iterable, Sequence
 
+from .llm_utils import (
+    create_client,
+    extract_response_text,
+    load_json_payload,
+    merge_token_usage,
+    response_token_usage,
+)
 from .models import AppConfig, MapSummariesResult, StoryThread, ThreadSummary
 from .prompts import (
     THREAD_MAP_JSON_RETRY_SUFFIX,
@@ -45,7 +50,7 @@ def summarize_threads_with_usage(
             batches_failed=0,
             threads_skipped=0,
         )
-    llm_client = client or _create_client(config)
+    llm_client = client or create_client(config)
     summaries: list[ThreadSummary] = []
     token_usage = {"input_tokens": 0, "output_tokens": 0}
     model = config.llm.model
@@ -63,7 +68,7 @@ def summarize_threads_with_usage(
             batch_skipped,
         ) = _summarize_thread_batch_resilient(batch, config, llm_client)
         summaries.extend(batch_summaries)
-        token_usage = _merge_token_usage(token_usage, batch_usage)
+        token_usage = merge_token_usage(token_usage, batch_usage)
         batches_total += batch_attempts
         batches_failed += batch_failures
         threads_skipped += batch_skipped
@@ -101,7 +106,7 @@ def _summarize_thread_batch_resilient(
     )
     left = _summarize_thread_batch_resilient(threads[:midpoint], config, client)
     right = _summarize_thread_batch_resilient(threads[midpoint:], config, client)
-    merged_usage = _merge_token_usage(batch_usage, _merge_token_usage(left[1], right[1]))
+    merged_usage = merge_token_usage(batch_usage, left[1], right[1])
     merged_model = right[2] or left[2] or batch_model
     return (
         left[0] + right[0],
@@ -134,10 +139,10 @@ def _summarize_thread_batch(
             time.sleep(2**attempt)
             continue
 
-        token_usage = _merge_token_usage(token_usage, _response_token_usage(response))
-        raw_text = _extract_response_text(response)
+        token_usage = merge_token_usage(token_usage, response_token_usage(response))
+        raw_text = extract_response_text(response)
         try:
-            payload = _load_json_payload(raw_text)
+            payload = load_json_payload(raw_text)
             items = _extract_items(payload)
             if len(items) != len(threads):
                 raise ValueError(
@@ -151,7 +156,7 @@ def _summarize_thread_batch(
                 token_usage,
                 str(getattr(response, "model", config.llm.model)),
             )
-        except (json.JSONDecodeError, ValueError, TypeError) as exc:
+        except (ValueError, TypeError) as exc:
             if attempt == max_retries - 1:
                 LOGGER.error("Skipping thread map-stage batch after invalid JSON: %s", exc)
                 return [], token_usage, str(getattr(response, "model", config.llm.model))
@@ -218,35 +223,6 @@ def _extract_items(payload: Any) -> list[dict[str, Any]]:
     if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
         raise TypeError("Map-stage JSON payload must contain a list of objects")
     return items
-
-
-def _load_json_payload(raw_text: str) -> Any:
-    """Load JSON, tolerating fenced blocks or surrounding text."""
-
-    stripped = raw_text.strip()
-    candidates = [stripped]
-    if stripped.startswith("```"):
-        lines = stripped.splitlines()
-        if len(lines) >= 3:
-            candidates.append("\n".join(lines[1:-1]).strip())
-    for opening, closing in (("{", "}"), ("[", "]")):
-        start = stripped.find(opening)
-        end = stripped.rfind(closing)
-        if start != -1 and end != -1 and end > start:
-            candidates.append(stripped[start : end + 1].strip())
-    last_error: json.JSONDecodeError | None = None
-    for candidate in candidates:
-        if not candidate:
-            continue
-        try:
-            return json.loads(candidate)
-        except json.JSONDecodeError as exc:
-            last_error = exc
-    if last_error is not None:
-        raise last_error
-    raise json.JSONDecodeError("No JSON content found", raw_text, 0)
-
-
 def _parse_thread_summary(item: dict[str, Any], thread: StoryThread) -> ThreadSummary:
     """Convert one JSON object into a ThreadSummary for a story thread."""
 
@@ -299,63 +275,3 @@ def _chunked(items: Sequence[Any], size: int) -> Iterable[list[Any]]:
 
     for index in range(0, len(items), size):
         yield list(items[index : index + size])
-
-
-def _create_client(config: AppConfig) -> Any:
-    """Create an OpenAI-compatible client for DeepSeek."""
-
-    from openai import OpenAI
-
-    api_key = os.getenv(config.llm.api_key_env)
-    if not api_key:
-        raise RuntimeError(f"Environment variable '{config.llm.api_key_env}' is required")
-    return OpenAI(api_key=api_key, base_url=config.llm.base_url)
-
-
-def _extract_response_text(response: Any) -> str:
-    """Extract the first text response from an SDK payload."""
-
-    choices = getattr(response, "choices", [])
-    if not choices:
-        raise RuntimeError("LLM response did not include any choices")
-    message = getattr(choices[0], "message", None)
-    content = getattr(message, "content", "")
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, dict):
-                text = item.get("text", "")
-            else:
-                text = getattr(item, "text", "")
-            if isinstance(text, str) and text.strip():
-                parts.append(text.strip())
-        return "\n".join(parts).strip()
-    return str(content).strip()
-
-
-def _response_token_usage(response: Any) -> dict[str, int]:
-    """Extract prompt/completion token counts from a response."""
-
-    usage = getattr(response, "usage", None)
-    return {
-        "input_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
-        "output_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
-    }
-
-
-def _merge_token_usage(
-    previous: dict[str, int],
-    current: dict[str, int],
-) -> dict[str, int]:
-    """Merge two token usage dictionaries."""
-
-    return {
-        "input_tokens": int(previous.get("input_tokens", 0)) + int(
-            current.get("input_tokens", 0)
-        ),
-        "output_tokens": int(previous.get("output_tokens", 0)) + int(
-            current.get("output_tokens", 0)
-        ),
-    }

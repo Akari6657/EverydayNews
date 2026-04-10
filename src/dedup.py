@@ -40,25 +40,6 @@ class EmbeddingCacheEntry:
     updated_at: str
 
 
-def deduplicate_within_thread(
-    thread: StoryThread,
-    config: AppConfig,
-    embedding_cache_path: str | Path | None = None,
-    now: datetime | None = None,
-    encoder: SupportsEncode | None = None,
-) -> StoryThread:
-    """Remove near-identical articles inside a single story thread."""
-
-    deduplicated, _ = deduplicate_within_thread_with_diagnostics(
-        thread,
-        config,
-        embedding_cache_path=embedding_cache_path,
-        now=now,
-        encoder=encoder,
-    )
-    return deduplicated
-
-
 def deduplicate_within_thread_with_diagnostics(
     thread: StoryThread,
     config: AppConfig,
@@ -72,7 +53,7 @@ def deduplicate_within_thread_with_diagnostics(
         before_articles=len(thread.articles),
         after_articles=len(thread.articles),
     )
-    if not config.dedup.within_thread_enabled or len(thread.articles) <= 1:
+    if len(thread.articles) <= 1:
         return thread, diagnostics
     reference_time = now or datetime.now(timezone.utc)
     embedding_cache_file = (

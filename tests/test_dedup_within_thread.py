@@ -29,7 +29,6 @@ def test_within_thread_dedup_merges_near_duplicate_articles(sample_config, make_
         dedup=replace(
             sample_config.dedup,
             method="embedding",
-            within_thread_enabled=True,
             within_thread_similarity_threshold=0.88,
         ),
     )
@@ -100,7 +99,6 @@ def test_within_thread_dedup_keeps_distinct_angles(sample_config, make_article) 
         dedup=replace(
             sample_config.dedup,
             method="embedding",
-            within_thread_enabled=True,
             within_thread_similarity_threshold=0.88,
         ),
     )

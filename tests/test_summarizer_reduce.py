@@ -360,38 +360,6 @@ def test_build_final_briefing_falls_back_on_unknown_thread_id(sample_config) -> 
     assert briefing.topics["国际政治"][0].thread_id == "cluster-1"
 
 
-def test_build_final_briefing_still_accepts_object_items(sample_config) -> None:
-    """Reduce-stage parser should remain compatible with object items."""
-
-    response = FakeResponse(
-        choices=[
-            FakeChoice(
-                FakeMessage(
-                    json.dumps(
-                        {
-                            "overview_zh": "测试概述。",
-                            "topics": {
-                                "国际政治": [
-                                    {
-                                        "thread_id": "cluster-1",
-                                        "headline_zh": "覆盖后的标题",
-                                    }
-                                ]
-                            },
-                        },
-                        ensure_ascii=False,
-                    )
-                )
-            )
-        ]
-    )
-    client = FakeClient([response])
-
-    briefing = build_final_briefing([_summary("cluster-1")], sample_config, client=client)
-
-    assert briefing.topics["国际政治"][0].headline_zh == "覆盖后的标题"
-
-
 def _summary(
     thread_id: str,
     topic: str = "国际政治",

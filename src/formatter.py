@@ -10,7 +10,6 @@ from string import Template
 
 from .models import (
     AppConfig,
-    Article,
     FinalBriefing,
     JsonOutputConfig,
     MarkdownOutputConfig,
@@ -22,7 +21,6 @@ DEFAULT_TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "
 
 def format_briefing(
     briefing: FinalBriefing,
-    articles: list[Article] | None,
     config: AppConfig,
     template_path: str | Path | None = None,
 ) -> Path:
@@ -35,7 +33,7 @@ def format_briefing(
         "md",
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    content = render_briefing(briefing, articles, config, template_path)
+    content = render_briefing(briefing, config, template_path)
     output_path.write_text(content, encoding="utf-8")
     if config.output.json.enabled:
         json_path = _resolve_output_path(
@@ -51,7 +49,6 @@ def format_briefing(
 
 def render_briefing(
     briefing: FinalBriefing,
-    articles: list[Article] | None,
     config: AppConfig,
     template_path: str | Path | None = None,
 ) -> str:
@@ -60,23 +57,21 @@ def render_briefing(
     template_file = Path(template_path) if template_path else DEFAULT_TEMPLATE_PATH
     if not template_file.exists():
         raise FileNotFoundError(f"Template file not found: {template_file}")
-    context = _build_context(briefing, articles, config)
+    context = _build_context(briefing, config)
     return _render_template(template_file, context)
 
 
 def _build_context(
     briefing: FinalBriefing,
-    articles: list[Article] | None,
     config: AppConfig,
 ) -> dict[str, str | int]:
     """Build the template context dictionary."""
 
-    source_names = _source_names_for_briefing(briefing, config)
     return {
         "generated_at": briefing.generated_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
-        "source_names": source_names,
-        "article_count": _article_count_for_briefing(briefing, articles),
-        "llm_content": _content_for_briefing(briefing),
+        "source_names": _source_names_for_briefing(briefing, config),
+        "article_count": briefing.total_threads,
+        "llm_content": _render_structured_markdown(briefing),
         "model": briefing.model,
         "input_tokens": briefing.token_usage.get("input_tokens", 0),
         "output_tokens": briefing.token_usage.get("output_tokens", 0),
@@ -96,22 +91,6 @@ def _render_template(template_file: Path, context: dict[str, str | int]) -> str:
         for key in context:
             sanitized = sanitized.replace(f"{{{{ {key} }}}}", f"${key}")
         return Template(sanitized).safe_substitute(context).strip() + "\n"
-
-
-def _content_for_briefing(briefing: FinalBriefing) -> str:
-    """Return the Markdown body content for the given briefing type."""
-
-    return _render_structured_markdown(briefing)
-
-
-def _article_count_for_briefing(
-    briefing: FinalBriefing,
-    articles: list[Article] | None,
-) -> int:
-    """Return the count displayed in the template header."""
-
-    del articles
-    return briefing.total_threads
 
 
 def _source_names_for_briefing(

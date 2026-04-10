@@ -45,7 +45,7 @@ def test_format_briefing_writes_output_file(sample_config, tmp_path) -> None:
     template_path.write_text("{{ llm_content }}\n{{ article_count }}\n", encoding="utf-8")
     briefing = _make_briefing()
 
-    output_path = format_briefing(briefing, None, sample_config, template_path=template_path)
+    output_path = format_briefing(briefing, sample_config, template_path=template_path)
 
     assert output_path.exists()
     assert output_path.parent.name == "2026-04"
@@ -59,7 +59,7 @@ def test_render_briefing_raises_for_missing_template(sample_config) -> None:
     briefing = _make_briefing()
 
     with pytest.raises(FileNotFoundError):
-        render_briefing(briefing, None, sample_config, template_path="missing-template.j2")
+        render_briefing(briefing, sample_config, template_path="missing-template.j2")
 
 
 def test_format_briefing_writes_structured_json_for_final_briefing(sample_config, tmp_path) -> None:
@@ -69,7 +69,7 @@ def test_format_briefing_writes_structured_json_for_final_briefing(sample_config
     template_path.write_text("{{ llm_content }}\n{{ article_count }}\n", encoding="utf-8")
     briefing = _make_briefing()
 
-    output_path = format_briefing(briefing, None, sample_config, template_path=template_path)
+    output_path = format_briefing(briefing, sample_config, template_path=template_path)
 
     json_path = output_path.with_suffix(".json")
     assert output_path.exists()
@@ -114,7 +114,7 @@ def test_render_briefing_supports_final_briefing(sample_config, tmp_path) -> Non
         model="deepseek-chat",
     )
 
-    content = render_briefing(briefing, None, sample_config, template_path=template_path)
+    content = render_briefing(briefing, sample_config, template_path=template_path)
 
     assert "今天重点关注国际政治与能源市场。" in content
     assert "## 经济金融" in content

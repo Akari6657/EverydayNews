@@ -46,7 +46,6 @@ class DedupConfig:
     method: str
     model: str
     cache_embeddings: bool
-    within_thread_enabled: bool = False
     within_thread_similarity_threshold: float = 0.88
 
 
@@ -143,18 +142,9 @@ class ScheduleConfig:
 
 
 @dataclass(frozen=True)
-class EvaluationConfig:
-    """Optional evaluation-stage settings."""
-
-    enabled: bool
-    max_retries: int
-
-
-@dataclass(frozen=True)
 class ThreadClusteringConfig:
     """LLM-based story-thread clustering settings."""
 
-    enabled: bool
     provider: str
     model: str
     max_retries: int
@@ -186,7 +176,6 @@ class AppConfig:
     config_path: Path
     thread_clustering: ThreadClusteringConfig = field(
         default_factory=lambda: ThreadClusteringConfig(
-            enabled=True,
             provider="deepseek",
             model="deepseek-chat",
             max_retries=2,
@@ -200,9 +189,6 @@ class AppConfig:
             importance_floor=0.15,
             keep_major_always=True,
         )
-    )
-    evaluation: EvaluationConfig = field(
-        default_factory=lambda: EvaluationConfig(enabled=False, max_retries=2)
     )
 
     def source_priorities(self) -> dict[str, int]:
@@ -309,51 +295,3 @@ class FinalBriefing:
     token_usage: dict[str, int]
     model: str
 
-
-@dataclass(frozen=True)
-class EvaluationResult:
-    """LLM-based quality evaluation for one generated briefing."""
-
-    coverage: int
-    diversity: int
-    clarity: int
-    redundancy: int
-    importance_calibration: int
-    notes: str
-    token_usage: dict[str, int]
-    model: str
-    generated_at: datetime
-
-    @property
-    def scores(self) -> dict[str, int]:
-        """Return the numeric evaluation scores as a plain dictionary."""
-
-        return {
-            "coverage": self.coverage,
-            "diversity": self.diversity,
-            "clarity": self.clarity,
-            "redundancy": self.redundancy,
-            "importance_calibration": self.importance_calibration,
-        }
-
-
-@dataclass(frozen=True)
-class RunMetrics:
-    """Per-run metrics written to the append-only metrics log."""
-
-    date: str
-    articles_fetched: int
-    threads: int
-    map_summaries_generated: int
-    after_importance_filter: int
-    final_items: int
-    total_tokens: int
-    duration_seconds: float
-    map_batches_total: int
-    map_batches_failed: int
-    map_threads_skipped: int
-    eval_scores: dict[str, int] | None
-    eval_notes: str | None
-    status: str = "success"
-    failure_stage: str | None = None
-    failure_reason: str | None = None
