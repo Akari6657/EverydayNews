@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any
+from typing import Any, Iterable, Sequence
 
 from .models import AppConfig
 
@@ -93,3 +93,10 @@ def is_content_risk_error(exc: Exception) -> bool:
     """Return whether a provider error indicates content-risk blocking."""
 
     return "Content Exists Risk" in str(exc)
+
+
+def chunked(items: Sequence[Any], size: int) -> Iterable[list[Any]]:
+    """Yield fixed-size chunks from a sequence."""
+
+    for index in range(0, len(items), size):
+        yield list(items[index : index + size])

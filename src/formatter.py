@@ -6,7 +6,6 @@ import json
 from dataclasses import asdict
 from datetime import timezone
 from pathlib import Path
-from string import Template
 
 from .models import (
     AppConfig,
@@ -82,18 +81,12 @@ def _build_context(
 
 
 def _render_template(template_file: Path, context: dict[str, str | int]) -> str:
-    """Render Jinja2 when available, with a simple fallback."""
+    """Render the briefing template with Jinja2."""
+
+    from jinja2 import Template as JinjaTemplate
 
     raw_template = template_file.read_text(encoding="utf-8")
-    try:
-        from jinja2 import Template as JinjaTemplate
-
-        return JinjaTemplate(raw_template).render(**context).strip() + "\n"
-    except ImportError:
-        sanitized = raw_template
-        for key in context:
-            sanitized = sanitized.replace(f"{{{{ {key} }}}}", f"${key}")
-        return Template(sanitized).safe_substitute(context).strip() + "\n"
+    return JinjaTemplate(raw_template).render(**context).strip() + "\n"
 
 
 def _source_names_for_briefing(

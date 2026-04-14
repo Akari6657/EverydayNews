@@ -69,7 +69,7 @@ def test_build_final_briefing_partitions_top_and_other_stories(sample_config) ->
 
     summaries = [
         _summary(
-            "thread-a",
+            1,
             topic="国际政治",
             headline_zh="伊朗局势升级",
             importance=9,
@@ -78,7 +78,7 @@ def test_build_final_briefing_partitions_top_and_other_stories(sample_config) ->
             article_count=3,
         ),
         _summary(
-            "thread-b",
+            2,
             topic="经济金融",
             headline_zh="油价波动加剧",
             importance=5,
@@ -110,8 +110,8 @@ def test_build_final_briefing_partitions_top_and_other_stories(sample_config) ->
     )
 
     assert briefing.overview_zh.startswith("国际局势")
-    assert [item.thread_id for item in briefing.top_stories] == ["thread-a"]
-    assert [item.thread_id for item in briefing.other_stories] == ["thread-b"]
+    assert [item.thread_id for item in briefing.top_stories] == [1]
+    assert [item.thread_id for item in briefing.other_stories] == [2]
     assert briefing.total_threads == 2
     assert briefing.total_sources == 2
     assert briefing.total_articles == 5
@@ -141,18 +141,18 @@ def test_build_final_briefing_retries_invalid_json(sample_config, monkeypatch) -
         ]
     )
 
-    briefing = build_final_briefing([_summary("thread-1")], sample_config, client=client)
+    briefing = build_final_briefing([_summary(1)], sample_config, client=client)
 
     assert len(client.chat.completions.calls) == 2
-    assert [item.thread_id for item in briefing.top_stories] == ["thread-1"]
+    assert [item.thread_id for item in briefing.top_stories] == [1]
 
 
 def test_build_final_briefing_falls_back_after_content_risk(sample_config) -> None:
     """Content-risk request failures should fall back to deterministic local assembly."""
 
     summaries = [
-        _summary("thread-1", topic="国际政治", importance=9),
-        _summary("thread-2", topic="经济金融", importance=5),
+        _summary(1, topic="国际政治", importance=9),
+        _summary(2, topic="经济金融", importance=5),
     ]
     client = FakeClient(
         [
@@ -165,8 +165,8 @@ def test_build_final_briefing_falls_back_after_content_risk(sample_config) -> No
 
     assert briefing.model.endswith("(fallback)")
     assert "今日简报重点涵盖" in briefing.overview_zh
-    assert [item.thread_id for item in briefing.top_stories] == ["thread-1"]
-    assert [item.thread_id for item in briefing.other_stories] == ["thread-2"]
+    assert [item.thread_id for item in briefing.top_stories] == [1]
+    assert [item.thread_id for item in briefing.other_stories] == [2]
 
 
 def test_build_final_briefing_limits_selected_summaries(sample_config) -> None:
@@ -180,8 +180,8 @@ def test_build_final_briefing_limits_selected_summaries(sample_config) -> None:
         ),
     )
     summaries = [
-        _summary("thread-1", importance=4),
-        _summary("thread-2", importance=9),
+        _summary(1, importance=4),
+        _summary(2, importance=9),
     ]
     response = FakeResponse(
         choices=[FakeChoice(FakeMessage(json.dumps({"overview_zh": "只保留了最高优先级新闻。"}, ensure_ascii=False)))]
@@ -191,7 +191,7 @@ def test_build_final_briefing_limits_selected_summaries(sample_config) -> None:
     briefing = build_final_briefing(summaries, config, client=client)
 
     assert briefing.total_threads == 1
-    assert [item.thread_id for item in briefing.top_stories] == ["thread-2"]
+    assert [item.thread_id for item in briefing.top_stories] == [2]
     assert briefing.other_stories == []
 
 
@@ -199,9 +199,9 @@ def test_build_final_briefing_filters_below_importance_threshold(sample_config) 
     """Reduce-stage should drop summaries below the configured importance threshold."""
 
     summaries = [
-        _summary("thread-1", importance=3),
-        _summary("thread-2", importance=4),
-        _summary("thread-3", importance=7),
+        _summary(1, importance=3),
+        _summary(2, importance=4),
+        _summary(3, importance=7),
     ]
     response = FakeResponse(
         choices=[FakeChoice(FakeMessage(json.dumps({"overview_zh": "保留了更重要的新闻。"}, ensure_ascii=False)))]
@@ -211,17 +211,17 @@ def test_build_final_briefing_filters_below_importance_threshold(sample_config) 
     briefing = build_final_briefing(summaries, sample_config, client=client)
 
     assert briefing.total_threads == 2
-    assert [item.thread_id for item in briefing.top_stories] == ["thread-3"]
-    assert [item.thread_id for item in briefing.other_stories] == ["thread-2"]
+    assert [item.thread_id for item in briefing.top_stories] == [3]
+    assert [item.thread_id for item in briefing.other_stories] == [2]
 
 
 def test_build_final_briefing_promotes_three_source_story_to_top(sample_config) -> None:
     """A story with importance >= 5 and three or more sources should be a top story."""
 
     summaries = [
-        _summary("thread-1", importance=5, source_count=3, source_names=["BBC News", "NPR", "Guardian"]),
-        _summary("thread-2", importance=5, source_count=2, source_names=["BBC News", "NPR"]),
-        _summary("thread-3", importance=5, source_count=1, source_names=["BBC News"]),
+        _summary(1, importance=5, source_count=3, source_names=["BBC News", "NPR", "Guardian"]),
+        _summary(2, importance=5, source_count=2, source_names=["BBC News", "NPR"]),
+        _summary(3, importance=5, source_count=1, source_names=["BBC News"]),
     ]
     response = FakeResponse(
         choices=[FakeChoice(FakeMessage(json.dumps({"overview_zh": "多源广泛报道的事件值得关注。"}, ensure_ascii=False)))]
@@ -230,8 +230,8 @@ def test_build_final_briefing_promotes_three_source_story_to_top(sample_config) 
 
     briefing = build_final_briefing(summaries, sample_config, client=client)
 
-    assert [item.thread_id for item in briefing.top_stories] == ["thread-1"]
-    assert {item.thread_id for item in briefing.other_stories} == {"thread-2", "thread-3"}
+    assert [item.thread_id for item in briefing.top_stories] == [1]
+    assert {item.thread_id for item in briefing.other_stories} == {2, 3}
 
 
 def test_build_final_briefing_always_includes_high_importance_stories(sample_config) -> None:
@@ -245,9 +245,9 @@ def test_build_final_briefing_always_includes_high_importance_stories(sample_con
         ),
     )
     summaries = [
-        _summary("thread-1", importance=6),
-        _summary("thread-2", importance=8),
-        _summary("thread-3", importance=9),
+        _summary(1, importance=6),
+        _summary(2, importance=8),
+        _summary(3, importance=9),
     ]
     response = FakeResponse(
         choices=[FakeChoice(FakeMessage(json.dumps({"overview_zh": "高重要性事件不受 top_k 截断。"}, ensure_ascii=False)))]
@@ -257,17 +257,17 @@ def test_build_final_briefing_always_includes_high_importance_stories(sample_con
     briefing = build_final_briefing(summaries, config, client=client)
 
     included_ids = {item.thread_id for item in briefing.all_stories}
-    assert "thread-2" in included_ids
-    assert "thread-3" in included_ids
-    assert "thread-1" not in included_ids
+    assert 2 in included_ids
+    assert 3 in included_ids
+    assert 1 not in included_ids
 
 
 def test_build_final_briefing_filters_noise_keywords(sample_config) -> None:
     """Configured summary noise keywords should exclude low-signal wrappers."""
 
     summaries = [
-        _summary("thread-1", headline_zh="伊朗战争最新动态", importance=8),
-        _summary("thread-2", headline_zh="特朗普设定新期限", importance=8),
+        _summary(1, headline_zh="伊朗战争最新动态", importance=8),
+        _summary(2, headline_zh="特朗普设定新期限", importance=8),
     ]
     response = FakeResponse(
         choices=[FakeChoice(FakeMessage(json.dumps({"overview_zh": "保留了更具信息量的新闻。"}, ensure_ascii=False)))]
@@ -277,13 +277,13 @@ def test_build_final_briefing_filters_noise_keywords(sample_config) -> None:
     briefing = build_final_briefing(summaries, sample_config, client=client)
 
     assert briefing.total_threads == 1
-    assert [item.thread_id for item in briefing.top_stories] == ["thread-2"]
+    assert [item.thread_id for item in briefing.top_stories] == [2]
 
 
 def test_build_final_briefing_returns_empty_briefing_when_no_summary_survives(sample_config) -> None:
     """An empty reduce input should still produce a valid empty briefing."""
 
-    briefing = build_final_briefing([_summary("thread-1", importance=1)], sample_config, client=FakeClient([]))
+    briefing = build_final_briefing([_summary(1, importance=1)], sample_config, client=FakeClient([]))
 
     assert briefing.overview_zh == "今日暂无新的头条新闻。"
     assert briefing.top_stories == []
@@ -293,7 +293,7 @@ def test_build_final_briefing_returns_empty_briefing_when_no_summary_survives(sa
 
 
 def _summary(
-    thread_id: str,
+    thread_id: int,
     topic: str = "国际政治",
     headline_zh: str = "默认标题",
     summary_zh: str = "默认摘要",

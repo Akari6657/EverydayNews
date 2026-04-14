@@ -28,6 +28,7 @@ def run_pipeline(
     dry_run: bool = False,
     dump_threads: bool = False,
     dedup_within_threads: bool = False,
+    eval: bool = False,
 ):
     """Run one pipeline invocation."""
 
@@ -75,6 +76,21 @@ def run_pipeline(
     )
     output_path = format_briefing(briefing, config)
     LOGGER.info("Briefing saved to %s", output_path)
+    if eval:
+        from .evaluator import evaluate_briefing, save_eval_result
+        eval_result = evaluate_briefing(briefing, map_result.summaries, config)
+        eval_path = save_eval_result(eval_result, config)
+        LOGGER.info(
+            "Briefing eval | coverage=%s | diversity=%s | clarity=%s"
+            " | redundancy=%s | importance_calibration=%s | notes=%s",
+            eval_result.coverage,
+            eval_result.diversity,
+            eval_result.clarity,
+            eval_result.redundancy,
+            eval_result.importance_calibration,
+            eval_result.notes,
+        )
+        LOGGER.info("Eval result saved to %s", eval_path)
     notify(output_path, briefing, config)
     return output_path
 
@@ -191,6 +207,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="With --dump-threads, apply strict within-thread near-duplicate cleanup",
     )
+    parser.add_argument(
+        "--eval",
+        action="store_true",
+        help="Run LLM quality evaluation after generating the briefing",
+    )
     return parser
 
 
@@ -209,6 +230,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         dry_run=args.dry_run,
         dump_threads=args.dump_threads,
         dedup_within_threads=args.dedup_within_threads,
+        eval=args.eval,
     )
     return 0
 

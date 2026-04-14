@@ -260,7 +260,7 @@ class ThreadDedupDiagnostics:
 class ThreadSummary:
     """Map-stage summary for a single story thread."""
 
-    thread_id: str
+    thread_id: int
     topic: str
     headline_zh: str
     summary_zh: str
@@ -312,3 +312,21 @@ class FinalBriefing:
         """Return all stories in display order."""
 
         return self.top_stories + self.other_stories
+
+
+@dataclass(frozen=True)
+class EvalResult:
+    """LLM-graded quality assessment for one daily briefing run."""
+
+    date: str
+    coverage: int
+    diversity: int
+    clarity: int
+    redundancy: int
+    importance_calibration: int
+    notes: str
+    model: str
+    generated_at: datetime
+    token_usage: dict[str, int]
+    candidate_count: int
+    briefing_thread_count: int

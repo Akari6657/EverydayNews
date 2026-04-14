@@ -162,6 +162,7 @@ def _deduplicate_within_thread_difflib(
         )
     return canonical_articles, merged_pairs
 
+
 def _best_difflib_cluster(
     normalized_title: str,
     normalized_titles: list[str],

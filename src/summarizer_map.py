@@ -5,9 +5,10 @@ from __future__ import annotations
 import logging
 import time
 from datetime import timezone
-from typing import Any, Iterable, Sequence
+from typing import Any, Sequence
 
 from .llm_utils import (
+    chunked,
     create_client,
     extract_response_text,
     load_json_payload,
@@ -58,7 +59,7 @@ def summarize_threads_with_usage(
     batches_failed = 0
     threads_skipped = 0
     batch_size = min(config.summarizer.map.batch_size, 4)
-    for batch in _chunked(threads, batch_size):
+    for batch in chunked(threads, batch_size):
         (
             batch_summaries,
             batch_usage,
@@ -223,6 +224,8 @@ def _extract_items(payload: Any) -> list[dict[str, Any]]:
     if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
         raise TypeError("Map-stage JSON payload must contain a list of objects")
     return items
+
+
 def _parse_thread_summary(item: dict[str, Any], thread: StoryThread) -> ThreadSummary:
     """Convert one JSON object into a ThreadSummary for a story thread."""
 
@@ -232,7 +235,7 @@ def _parse_thread_summary(item: dict[str, Any], thread: StoryThread) -> ThreadSu
     importance = _coerce_importance(item.get("importance"))
     entities = _coerce_string_list(item.get("entities", []))
     return ThreadSummary(
-        thread_id=f"thread-{thread.thread_id}",
+        thread_id=thread.thread_id,
         topic=topic,
         headline_zh=headline_zh,
         summary_zh=summary_zh,
@@ -274,8 +277,3 @@ def _coerce_string_list(value: Any) -> list[str]:
     return []
 
 
-def _chunked(items: Sequence[Any], size: int) -> Iterable[list[Any]]:
-    """Yield fixed-size chunks from an input sequence."""
-
-    for index in range(0, len(items), size):
-        yield list(items[index : index + size])

@@ -8,7 +8,7 @@ import time
 from collections import Counter
 from typing import Any, Sequence
 
-from .llm_utils import create_client, extract_response_text, load_json_payload
+from .llm_utils import chunked, create_client, extract_response_text, load_json_payload
 from .models import AppConfig, Article, StoryThread
 from .prompts import (
     THREAD_CLUSTERING_JSON_RETRY_SUFFIX,
@@ -68,7 +68,7 @@ def _cluster_large_article_set(
         max_per_call,
     )
     threads: list[StoryThread] = []
-    for chunk in _chunked(articles, max_per_call):
+    for chunk in chunked(articles, max_per_call):
         threads.extend(cluster_into_threads(chunk, config, client=client))
     return _renumber_threads(_sort_threads(threads))
 
@@ -354,8 +354,7 @@ def _is_generic_wrapper_title(title: str) -> bool:
 
     normalized = _normalize_title(title)
     return (
-        normalized.startswith("watch ")
-        or normalized.startswith("watch")
+        normalized.startswith("watch")
         or normalized.startswith("morning news brief")
         or normalized.startswith("what to know")
         or normalized.startswith("what we know")
@@ -525,7 +524,3 @@ def _meaningful_tokens(title: str) -> list[str]:
         for token in title.split()
         if len(token) >= 4 and token not in stopwords
     ]
-def _chunked(items: Sequence[Article], size: int) -> list[list[Article]]:
-    """Split articles into equally sized chunks."""
-
-    return [list(items[index : index + size]) for index in range(0, len(items), size)]
