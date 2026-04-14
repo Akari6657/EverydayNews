@@ -149,9 +149,11 @@ def test_run_pipeline_uses_story_threads_by_default(
     briefing = FinalBriefing(
         date="2026-04-08",
         overview_zh="线程版综述。",
-        topics={"国际政治": [summary]},
+        top_stories=[summary],
+        other_stories=[],
         total_threads=1,
         total_sources=1,
+        total_articles=1,
         generated_at=datetime(2026, 4, 8, 12, 0, tzinfo=timezone.utc),
         token_usage={"input_tokens": 10, "output_tokens": 20},
         model="deepseek-chat",
@@ -185,6 +187,8 @@ def test_run_pipeline_uses_story_threads_by_default(
 
     assert result == output_path
     assert calls["summaries"] == [summary]
+
+
 def test_parse_run_at_rejects_invalid_times() -> None:
     """Scheduler time parser should reject invalid values."""
 

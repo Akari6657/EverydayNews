@@ -124,61 +124,48 @@ THREAD_MAP_JSON_RETRY_SUFFIX = """
 不要输出任何其他文字。
 """
 
-REDUCE_SYSTEM_PROMPT = "你是一位资深国际新闻主编，擅长将结构化新闻摘要编排为高质量中文日报。你必须返回合法 JSON。"
+REDUCE_SYSTEM_PROMPT = "你是一位资深国际新闻主编，擅长根据候选故事线撰写高质量中文日报综述。你必须返回合法 JSON。"
 
-REDUCE_USER_PROMPT_TEMPLATE = """你是一位资深国际新闻主编。下面是今天各媒体头条新闻的结构化摘要列表。你的任务是生成一份高质量的中文日报。
+REDUCE_USER_PROMPT_TEMPLATE = """你是一位资深国际新闻主编。下面是今天按重要性排序的候选故事线。
 
-请完成：
-1. 写一段 3-5 句的今日新闻综述（overview_zh），概括今天最重要的事件和趋势
-2. 将新闻按主题重新组织（可以合并相近主题、调整分类）
-3. 每个主题下的新闻按重要性排序
-4. 每个主题下只返回 thread_id 列表，顺序就是最终展示顺序
-5. 不要重复输出 headline_zh、summary_zh、source_names、primary_link、importance、entities，这些字段会由程序根据 thread_id 自动补全
+请只完成一件事：
+1. 写一段 3-5 句的今日新闻综述（overview_zh），概括今天最重要的事件、趋势和需要关注的发展。
 
-返回严格的 JSON 对象，不要输出任何其他文字。
-顶层格式必须是：
+要求：
+- 开头点明今天的头号新闻
+- 提及 2-3 个次要但值得关注的事件
+- 语气客观、信息密度高，不要空话
+- 只返回合法 JSON，不要输出任何额外说明
+
+返回格式必须是：
 {{
-  "overview_zh": "...",
-  "topics": {{
-    "国际政治": ["thread_id_1", "thread_id_2"],
-    "经济金融": ["thread_id_3"]
-  }}
+  "overview_zh": "..."
 }}
 
-新闻摘要列表（已按重要性排序）：
+候选故事线列表：
 {summaries_payload}
 """
 
 REDUCE_JSON_RETRY_SUFFIX = """
 
-重要提醒：你上一次没有返回可解析的 JSON。请这一次严格只返回一个 JSON 对象，格式必须包含：
+重要提醒：你上一次没有返回可解析的 JSON。请这一次严格只返回一个 JSON 对象，格式必须是：
 {
-  "overview_zh": "...",
-  "topics": {
-    "主题名": ["thread_id_1", "thread_id_2"]
-  }
+  "overview_zh": "..."
 }
 不要输出任何其他文字。
 """
 
-REDUCE_SAFE_USER_PROMPT_TEMPLATE = """你是一位资深国际新闻主编。下面是今天候选新闻的精简列表。请避免复述候选中的敏感细节，只基于主题、简短标题和重要性做高层概括。
+REDUCE_SAFE_USER_PROMPT_TEMPLATE = """你是一位资深国际新闻主编。下面是今天候选故事线的精简列表。请避免复述敏感细节，只基于主题、简短标题和重要性做高层概括。
 
-请完成：
+请只完成一件事：
 1. 写一段 2-4 句的今日新闻综述（overview_zh），用中性、概括性的中文表达
-2. 将新闻按主题组织
-3. 每个主题下只返回 thread_id 列表，顺序就是最终展示顺序
-4. 不要输出任何其他文字
 
 返回严格的 JSON 对象，格式必须是：
 {{
-  "overview_zh": "...",
-  "topics": {{
-    "国际政治": ["thread_id_1", "thread_id_2"],
-    "经济金融": ["thread_id_3"]
-  }}
+  "overview_zh": "..."
 }}
 
-候选新闻列表：
+候选故事线列表：
 {summaries_payload}
 """
 

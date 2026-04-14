@@ -6,5 +6,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 AGENTS.md
+CLAUDE.md
 .codex
 docs/

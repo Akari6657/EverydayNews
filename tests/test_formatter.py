@@ -13,25 +13,38 @@ from src.models import FinalBriefing, ThreadSummary
 def _make_briefing() -> FinalBriefing:
     """Create a minimal structured briefing for formatter tests."""
 
+    top_story = ThreadSummary(
+        thread_id="thread-1",
+        topic="国际政治",
+        headline_zh="伊朗局势升级",
+        summary_zh="中东局势持续紧张。",
+        importance=9,
+        entities=["伊朗", "美国"],
+        source_names=["New York Times", "BBC News"],
+        primary_link="https://example.com/story",
+        source_count=2,
+        article_count=2,
+    )
+    other_story = ThreadSummary(
+        thread_id="thread-2",
+        topic="经济金融",
+        headline_zh="油价波动加剧",
+        summary_zh="国际油价因地缘政治变化而震荡。",
+        importance=5,
+        entities=["布伦特原油"],
+        source_names=["BBC News"],
+        primary_link="https://example.com/oil",
+        source_count=1,
+        article_count=1,
+    )
     return FinalBriefing(
         date="2026-04-06",
         overview_zh="今日综述。",
-        topics={
-            "国际政治": [
-                ThreadSummary(
-                    thread_id="thread-1",
-                    topic="国际政治",
-                    headline_zh="伊朗局势升级",
-                    summary_zh="中东局势持续紧张。",
-                    importance=9,
-                    entities=["伊朗", "美国"],
-                    source_names=["New York Times", "BBC News"],
-                    primary_link="https://example.com/story",
-                )
-            ]
-        },
-        total_threads=1,
+        top_stories=[top_story],
+        other_stories=[other_story],
+        total_threads=2,
         total_sources=2,
+        total_articles=3,
         generated_at=datetime(2026, 4, 6, 12, 0, tzinfo=timezone.utc),
         token_usage={"input_tokens": 15, "output_tokens": 30},
         model="deepseek-chat",
@@ -80,7 +93,7 @@ def test_format_briefing_writes_structured_json_for_final_briefing(sample_config
     assert json_path.exists()
     markdown = output_path.read_text(encoding="utf-8")
     assert "### 伊朗局势升级" in markdown
-    assert "1" in markdown
+    assert "## 📎 其他值得关注" in markdown
     payload = json_path.read_text(encoding="utf-8")
     assert "\"overview_zh\": \"今日综述。\"" in payload
 
@@ -90,25 +103,26 @@ def test_render_briefing_supports_final_briefing(sample_config, tmp_path) -> Non
 
     template_path = tmp_path / "briefing.md.j2"
     template_path.write_text("{{ llm_content }}", encoding="utf-8")
+    summary = ThreadSummary(
+        thread_id="thread-2",
+        topic="经济金融",
+        headline_zh="油价波动加剧",
+        summary_zh="国际油价因地缘政治变化而震荡。",
+        importance=7,
+        entities=["布伦特原油"],
+        source_names=["BBC News"],
+        primary_link="https://example.com/oil",
+        source_count=1,
+        article_count=1,
+    )
     briefing = FinalBriefing(
         date="2026-04-06",
         overview_zh="今天重点关注国际政治与能源市场。",
-        topics={
-            "经济金融": [
-                ThreadSummary(
-                    thread_id="thread-2",
-                    topic="经济金融",
-                    headline_zh="油价波动加剧",
-                    summary_zh="国际油价因地缘政治变化而震荡。",
-                    importance=7,
-                    entities=["布伦特原油"],
-                    source_names=["BBC News"],
-                    primary_link="https://example.com/oil",
-                )
-            ]
-        },
+        top_stories=[],
+        other_stories=[summary],
         total_threads=1,
         total_sources=1,
+        total_articles=1,
         generated_at=datetime(2026, 4, 6, 12, 0, tzinfo=timezone.utc),
         token_usage={"input_tokens": 0, "output_tokens": 0},
         model="deepseek-chat",
@@ -117,5 +131,6 @@ def test_render_briefing_supports_final_briefing(sample_config, tmp_path) -> Non
     content = render_briefing(briefing, sample_config, template_path=template_path)
 
     assert "今天重点关注国际政治与能源市场。" in content
-    assert "## 经济金融" in content
-    assert "- 链接：https://example.com/oil" in content
+    assert "## 📎 其他值得关注" in content
+    assert "**油价波动加剧**" in content
+    assert "https://example.com/oil" in content

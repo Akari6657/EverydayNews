@@ -1,8 +1,8 @@
 # Daily Headline Agent
 
-Daily Headline Agent collects RSS headlines from major news outlets, removes duplicates, summarizes the day in Chinese with an LLM, and delivers a daily Markdown briefing.
+Daily Headline Agent collects RSS headlines from major news outlets, removes duplicates, summarizes the day in Chinese with an LLM, and delivers a two-layer daily Markdown briefing.
 
-Daily Headline Agent（每日头条助手）会从多个国际新闻 RSS 源抓取头条，做跨媒体去重，再调用 LLM 生成中文摘要，并输出每日简报。
+Daily Headline Agent（每日头条助手）会从多个国际新闻 RSS 源抓取头条，做跨媒体去重，再调用 LLM 生成中文摘要，并输出分为“今日头条 / 其他值得关注”的每日简报。
 
 The active pipeline on this branch is the **V2 story-thread pipeline**:
 
@@ -22,6 +22,7 @@ Notes:
 - `python -m src.main` runs the default V2 story-thread pipeline.
 - `python -m src.main --dump-threads` prints the intermediate story-thread assignments for manual review.
 - `python -m src.main --dump-threads --dedup-within-threads` adds strict near-duplicate cleanup inside each story thread.
+- The rendered briefing is split into `🔥 今日头条` and `📎 其他值得关注`.
 
 ## Configuration
 

@@ -64,23 +64,27 @@ class FakeClient:
         self.chat = type("Chat", (), {"completions": FakeCompletions(responses)})()
 
 
-def test_build_final_briefing_groups_topics_and_aggregates_usage(sample_config) -> None:
-    """Reduce-stage summarizer should return a structured FinalBriefing."""
+def test_build_final_briefing_partitions_top_and_other_stories(sample_config) -> None:
+    """Reduce-stage summarizer should produce a two-layer FinalBriefing."""
 
     summaries = [
         _summary(
-            "cluster-a",
+            "thread-a",
             topic="国际政治",
             headline_zh="伊朗局势升级",
             importance=9,
             source_names=["New York Times", "BBC News"],
+            source_count=2,
+            article_count=3,
         ),
         _summary(
-            "cluster-b",
+            "thread-b",
             topic="经济金融",
             headline_zh="油价波动加剧",
-            importance=7,
+            importance=5,
             source_names=["BBC News"],
+            source_count=1,
+            article_count=2,
         ),
     ]
     response = FakeResponse(
@@ -88,13 +92,7 @@ def test_build_final_briefing_groups_topics_and_aggregates_usage(sample_config) 
             FakeChoice(
                 FakeMessage(
                     json.dumps(
-                        {
-                            "overview_zh": "国际局势与能源市场成为今日焦点。",
-                            "topics": {
-                                "国际政治": ["cluster-a"],
-                                "经济金融": ["cluster-b"],
-                            },
-                        },
+                        {"overview_zh": "国际局势与能源市场成为今日焦点。"},
                         ensure_ascii=False,
                     )
                 )
@@ -112,9 +110,11 @@ def test_build_final_briefing_groups_topics_and_aggregates_usage(sample_config) 
     )
 
     assert briefing.overview_zh.startswith("国际局势")
-    assert list(briefing.topics) == ["国际政治", "经济金融"]
+    assert [item.thread_id for item in briefing.top_stories] == ["thread-a"]
+    assert [item.thread_id for item in briefing.other_stories] == ["thread-b"]
     assert briefing.total_threads == 2
     assert briefing.total_sources == 2
+    assert briefing.total_articles == 5
     assert briefing.token_usage == {"input_tokens": 544, "output_tokens": 161}
     assert client.chat.completions.calls[0]["response_format"] == {"type": "json_object"}
 
@@ -131,10 +131,7 @@ def test_build_final_briefing_retries_invalid_json(sample_config, monkeypatch) -
                     FakeChoice(
                         FakeMessage(
                             json.dumps(
-                                {
-                                    "overview_zh": "今日焦点集中在国际政治。",
-                                    "topics": {"国际政治": ["cluster-1"]},
-                                },
+                                {"overview_zh": "今日焦点集中在国际政治。"},
                                 ensure_ascii=False,
                             )
                         )
@@ -144,19 +141,18 @@ def test_build_final_briefing_retries_invalid_json(sample_config, monkeypatch) -
         ]
     )
 
-    briefing = build_final_briefing([_summary("cluster-1")], sample_config, client=client)
+    briefing = build_final_briefing([_summary("thread-1")], sample_config, client=client)
 
     assert len(client.chat.completions.calls) == 2
-    assert list(briefing.topics) == ["国际政治"]
-    assert briefing.topics["国际政治"][0].thread_id == "cluster-1"
+    assert [item.thread_id for item in briefing.top_stories] == ["thread-1"]
 
 
 def test_build_final_briefing_falls_back_after_content_risk(sample_config) -> None:
     """Content-risk request failures should fall back to deterministic local assembly."""
 
     summaries = [
-        _summary("cluster-1", topic="国际政治", importance=9),
-        _summary("cluster-2", topic="经济金融", importance=7),
+        _summary("thread-1", topic="国际政治", importance=9),
+        _summary("thread-2", topic="经济金融", importance=5),
     ]
     client = FakeClient(
         [
@@ -168,39 +164,9 @@ def test_build_final_briefing_falls_back_after_content_risk(sample_config) -> No
     briefing = build_final_briefing(summaries, sample_config, client=client)
 
     assert briefing.model.endswith("(fallback)")
-    assert briefing.total_threads == 2
     assert "今日简报重点涵盖" in briefing.overview_zh
-    assert list(briefing.topics) == ["国际政治", "经济金融"]
-
-
-def test_build_final_briefing_appends_missing_threads(sample_config) -> None:
-    """Omitted threads should be appended back under their original topics."""
-
-    summaries = [
-        _summary("cluster-1", topic="国际政治", importance=9),
-        _summary("cluster-2", topic="科技", importance=6),
-    ]
-    response = FakeResponse(
-        choices=[
-            FakeChoice(
-                FakeMessage(
-                    json.dumps(
-                        {
-                            "overview_zh": "今日以国际政治为主。",
-                            "topics": {"国际政治": ["cluster-1"]},
-                        },
-                        ensure_ascii=False,
-                    )
-                )
-            )
-        ]
-    )
-    client = FakeClient([response])
-
-    briefing = build_final_briefing(summaries, sample_config, client=client)
-
-    assert "科技" in briefing.topics
-    assert briefing.topics["科技"][0].thread_id == "cluster-2"
+    assert [item.thread_id for item in briefing.top_stories] == ["thread-1"]
+    assert [item.thread_id for item in briefing.other_stories] == ["thread-2"]
 
 
 def test_build_final_briefing_limits_selected_summaries(sample_config) -> None:
@@ -214,150 +180,87 @@ def test_build_final_briefing_limits_selected_summaries(sample_config) -> None:
         ),
     )
     summaries = [
-        _summary("cluster-1", importance=4),
-        _summary("cluster-2", importance=9),
+        _summary("thread-1", importance=4),
+        _summary("thread-2", importance=9),
     ]
     response = FakeResponse(
-        choices=[
-            FakeChoice(
-                FakeMessage(
-                    json.dumps(
-                        {
-                            "overview_zh": "只保留了最高优先级新闻。",
-                            "topics": {"国际政治": ["cluster-2"]},
-                        },
-                        ensure_ascii=False,
-                    )
-                )
-            )
-        ]
+        choices=[FakeChoice(FakeMessage(json.dumps({"overview_zh": "只保留了最高优先级新闻。"}, ensure_ascii=False)))]
     )
     client = FakeClient([response])
 
     briefing = build_final_briefing(summaries, config, client=client)
 
     assert briefing.total_threads == 1
-    assert briefing.topics["国际政治"][0].thread_id == "cluster-2"
+    assert [item.thread_id for item in briefing.top_stories] == ["thread-2"]
+    assert briefing.other_stories == []
 
 
 def test_build_final_briefing_filters_below_importance_threshold(sample_config) -> None:
     """Reduce-stage should drop summaries below the configured importance threshold."""
 
     summaries = [
-        _summary("cluster-1", importance=3),
-        _summary("cluster-2", importance=4),
-        _summary("cluster-3", importance=7),
+        _summary("thread-1", importance=3),
+        _summary("thread-2", importance=4),
+        _summary("thread-3", importance=7),
     ]
     response = FakeResponse(
-        choices=[
-            FakeChoice(
-                FakeMessage(
-                    json.dumps(
-                        {
-                            "overview_zh": "保留了更重要的新闻。",
-                            "topics": {"国际政治": ["cluster-3", "cluster-2"]},
-                        },
-                        ensure_ascii=False,
-                    )
-                )
-            )
-        ]
+        choices=[FakeChoice(FakeMessage(json.dumps({"overview_zh": "保留了更重要的新闻。"}, ensure_ascii=False)))]
     )
     client = FakeClient([response])
 
     briefing = build_final_briefing(summaries, sample_config, client=client)
 
     assert briefing.total_threads == 2
-    assert [item.thread_id for item in briefing.topics["国际政治"]] == ["cluster-3", "cluster-2"]
+    assert [item.thread_id for item in briefing.top_stories] == ["thread-3"]
+    assert [item.thread_id for item in briefing.other_stories] == ["thread-2"]
+
+
+def test_build_final_briefing_keeps_multisource_story_even_at_lower_importance(sample_config) -> None:
+    """Multi-source stories should still land in the top-stories section."""
+
+    summaries = [
+        _summary("thread-1", importance=5, source_count=2, source_names=["BBC News", "NPR"]),
+        _summary("thread-2", importance=5, source_count=1, source_names=["BBC News"]),
+    ]
+    response = FakeResponse(
+        choices=[FakeChoice(FakeMessage(json.dumps({"overview_zh": "多源报道仍然值得关注。"}, ensure_ascii=False)))]
+    )
+    client = FakeClient([response])
+
+    briefing = build_final_briefing(summaries, sample_config, client=client)
+
+    assert [item.thread_id for item in briefing.top_stories] == ["thread-1"]
+    assert [item.thread_id for item in briefing.other_stories] == ["thread-2"]
 
 
 def test_build_final_briefing_filters_noise_keywords(sample_config) -> None:
-    """Configured summary noise keywords should exclude low-signal live wrappers."""
+    """Configured summary noise keywords should exclude low-signal wrappers."""
 
     summaries = [
-        _summary("cluster-1", headline_zh="伊朗战争最新动态", importance=8),
-        _summary("cluster-2", headline_zh="特朗普设定新期限", importance=8),
+        _summary("thread-1", headline_zh="伊朗战争最新动态", importance=8),
+        _summary("thread-2", headline_zh="特朗普设定新期限", importance=8),
     ]
     response = FakeResponse(
-        choices=[
-            FakeChoice(
-                FakeMessage(
-                    json.dumps(
-                        {
-                            "overview_zh": "保留了更具信息量的新闻。",
-                            "topics": {"国际政治": ["cluster-2"]},
-                        },
-                        ensure_ascii=False,
-                    )
-                )
-            )
-        ]
+        choices=[FakeChoice(FakeMessage(json.dumps({"overview_zh": "保留了更具信息量的新闻。"}, ensure_ascii=False)))]
     )
     client = FakeClient([response])
 
     briefing = build_final_briefing(summaries, sample_config, client=client)
 
     assert briefing.total_threads == 1
-    assert [item.thread_id for item in briefing.topics["国际政治"]] == ["cluster-2"]
+    assert [item.thread_id for item in briefing.top_stories] == ["thread-2"]
 
 
-def test_build_final_briefing_trims_each_topic_to_limit(sample_config) -> None:
-    """Each topic should keep at most the configured number of items."""
+def test_build_final_briefing_returns_empty_briefing_when_no_summary_survives(sample_config) -> None:
+    """An empty reduce input should still produce a valid empty briefing."""
 
-    config = replace(sample_config, pipeline=replace(sample_config.pipeline, max_items_per_topic=2))
-    summaries = [
-        _summary("cluster-1", importance=9),
-        _summary("cluster-2", importance=8),
-        _summary("cluster-3", importance=7),
-    ]
-    response = FakeResponse(
-        choices=[
-            FakeChoice(
-                FakeMessage(
-                    json.dumps(
-                        {
-                            "overview_zh": "测试主题上限。",
-                            "topics": {"国际政治": ["cluster-1", "cluster-2", "cluster-3"]},
-                        },
-                        ensure_ascii=False,
-                    )
-                )
-            )
-        ]
-    )
-    client = FakeClient([response])
+    briefing = build_final_briefing([_summary("thread-1", importance=1)], sample_config, client=FakeClient([]))
 
-    briefing = build_final_briefing(summaries, config, client=client)
-
-    assert briefing.total_threads == 2
-    assert [item.thread_id for item in briefing.topics["国际政治"]] == ["cluster-1", "cluster-2"]
-
-
-def test_build_final_briefing_falls_back_on_unknown_thread_id(sample_config) -> None:
-    """Unknown thread ids from the model should trigger local fallback assembly."""
-
-    response = FakeResponse(
-        choices=[
-            FakeChoice(
-                FakeMessage(
-                    json.dumps(
-                        {
-                            "overview_zh": "测试概述。",
-                            "topics": {"国际政治": ["unknown"]},
-                        },
-                        ensure_ascii=False,
-                    )
-                )
-            )
-        ]
-    )
-    client = FakeClient([response])
-
-    briefing = build_final_briefing([_summary("cluster-1")], sample_config, client=client)
-
-    assert briefing.model.endswith("(fallback)")
-    assert briefing.total_threads == 1
-    assert briefing.topics["国际政治"][0].thread_id == "cluster-1"
+    assert briefing.overview_zh == "今日暂无新的头条新闻。"
+    assert briefing.top_stories == []
+    assert briefing.other_stories == []
+    assert briefing.total_threads == 0
+    assert briefing.total_articles == 0
 
 
 def _summary(
@@ -367,11 +270,14 @@ def _summary(
     summary_zh: str = "默认摘要",
     importance: int = 8,
     source_names: list[str] | None = None,
+    source_count: int | None = None,
+    article_count: int = 1,
 ):
     """Build a ThreadSummary test object."""
 
     from src.models import ThreadSummary
 
+    names = source_names or ["New York Times"]
     return ThreadSummary(
         thread_id=thread_id,
         topic=topic,
@@ -379,6 +285,9 @@ def _summary(
         summary_zh=summary_zh,
         importance=importance,
         entities=["实体A"],
-        source_names=source_names or ["New York Times"],
+        source_names=names,
         primary_link=f"https://example.com/{thread_id}",
+        source_count=source_count if source_count is not None else len(names),
+        article_count=article_count,
+        all_links=[(name, f"https://example.com/{thread_id}-{index}") for index, name in enumerate(names, start=1)],
     )

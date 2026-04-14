@@ -82,7 +82,7 @@ def _select_summaries(summaries: list[ThreadSummary], config: AppConfig) -> list
         filtered,
         key=lambda summary: (
             -summary.importance,
-            -len(summary.source_names),
+            -summary.effective_source_count,
             summary.thread_id,
         ),
     )
@@ -100,9 +100,11 @@ def _empty_briefing(
     return FinalBriefing(
         date=generated_at.astimezone(timezone.utc).strftime("%Y-%m-%d"),
         overview_zh="今日暂无新的头条新闻。",
-        topics={},
+        top_stories=[],
+        other_stories=[],
         total_threads=0,
         total_sources=0,
+        total_articles=0,
         generated_at=generated_at,
         token_usage=usage,
         model=config.llm.model,
@@ -130,7 +132,9 @@ def _summary_block(summary: ThreadSummary) -> str:
         f"中文标题: {summary.headline_zh}",
         f"摘要: {summary.summary_zh}",
         f"重要性: {summary.importance}/10",
+        f"来源数: {summary.effective_source_count}",
         f"来源: {', '.join(summary.source_names)}",
+        f"文章数: {summary.article_count}",
         f"实体: {', '.join(summary.entities) if summary.entities else '无'}",
         f"链接: {summary.primary_link}",
         "---",
@@ -146,7 +150,7 @@ def _safe_summary_block(summary: ThreadSummary) -> str:
         f"主题: {summary.topic}",
         f"中文标题: {summary.headline_zh}",
         f"重要性: {summary.importance}/10",
-        f"来源数: {len(summary.source_names)}",
+        f"来源数: {summary.effective_source_count}",
         "---",
     ]
     return "\n".join(lines)
@@ -216,63 +220,33 @@ def _fallback_briefing(
 ) -> FinalBriefing:
     """Assemble a deterministic local briefing when reduce LLM calls fail."""
 
-    topics: dict[str, list[ThreadSummary]] = {}
-    for summary in selected:
-        topics.setdefault(summary.topic, []).append(summary)
-    for topic_name, items in list(topics.items()):
-        topics[topic_name] = _rank_summaries(items)[: config.pipeline.max_items_per_topic]
-    displayed = [summary for items in topics.values() for summary in items]
-    return FinalBriefing(
-        date=generated_at.astimezone(timezone.utc).strftime("%Y-%m-%d"),
-        overview_zh=_fallback_overview(topics),
-        topics=topics,
-        total_threads=len(displayed),
-        total_sources=len({name for summary in displayed for name in summary.source_names}),
+    top_stories, other_stories = _partition_stories(selected)
+    return _build_briefing(
+        overview_zh=_fallback_overview(top_stories, other_stories),
+        top_stories=top_stories,
+        other_stories=other_stories,
         generated_at=generated_at,
         token_usage=merge_token_usage(prior_token_usage, {"input_tokens": 0, "output_tokens": 0}),
         model=f"{config.llm.model} (fallback)",
     )
 
 
-def _fallback_overview(topics: dict[str, list[ThreadSummary]]) -> str:
+def _fallback_overview(
+    top_stories: list[ThreadSummary],
+    other_stories: list[ThreadSummary],
+) -> str:
     """Generate a simple Chinese overview without an extra LLM call."""
 
-    if not topics:
+    stories = top_stories + other_stories
+    if not stories:
         return "今日暂无新的头条新闻。"
-    ranked_topics = _ranked_topics(topics)
-    topic_parts = [
-        f"{topic_name}（{len(items)}条）"
-        for topic_name, items in ranked_topics[:3]
-    ]
-    headline_parts = [
-        items[0].headline_zh
-        for _, items in ranked_topics[:3]
-        if items
-    ]
-    overview = f"今日简报重点涵盖{'、'.join(topic_parts)}。"
+    lead_stories = top_stories or stories[:3]
+    topic_parts = [story.topic for story in lead_stories[:3]]
+    headline_parts = [story.headline_zh for story in lead_stories[:3]]
+    overview = f"今日简报重点涵盖{'、'.join(topic_parts)}等主题。"
     if headline_parts:
         overview += f"主要关注事件包括{'、'.join(headline_parts)}。"
     return overview
-
-
-def _rank_summaries(items: list[ThreadSummary]) -> list[ThreadSummary]:
-    """Rank summaries within one topic for deterministic fallback output."""
-
-    return sorted(
-        items,
-        key=lambda item: (-item.importance, -len(item.source_names), item.thread_id),
-    )
-
-
-def _ranked_topics(
-    topics: dict[str, list[ThreadSummary]],
-) -> list[tuple[str, list[ThreadSummary]]]:
-    """Rank topic groups for fallback overview generation."""
-
-    return sorted(
-        topics.items(),
-        key=lambda item: (-len(item[1]), -max(summary.importance for summary in item[1]), item[0]),
-    )
 
 
 def _parse_final_briefing(
@@ -288,101 +262,58 @@ def _parse_final_briefing(
     overview = payload.get("overview_zh")
     if not isinstance(overview, str) or not overview.strip():
         raise ValueError("Reduce-stage JSON must include a non-empty 'overview_zh'")
-
-    topic_payload = payload.get("topics", {})
-    if not isinstance(topic_payload, dict):
-        raise ValueError("Reduce-stage JSON must include an object 'topics'")
-
-    summary_lookup = {summary.thread_id: summary for summary in selected}
-    topics: dict[str, list[ThreadSummary]] = {}
-    seen_thread_ids: set[str] = set()
-    for topic_name, items in topic_payload.items():
-        if not isinstance(topic_name, str) or not topic_name.strip():
-            raise ValueError("Topic names in reduce-stage JSON must be non-empty strings")
-        if not isinstance(items, list):
-            raise ValueError("Each topic in reduce-stage JSON must map to a list")
-        parsed_items: list[ThreadSummary] = []
-        for item in items:
-            parsed_summary = _parse_topic_item(item, topic_name.strip(), summary_lookup)
-            parsed_items.append(parsed_summary)
-            seen_thread_ids.add(parsed_summary.thread_id)
-        topics[topic_name.strip()] = parsed_items
-
-    _append_missing_summaries(topics, selected, seen_thread_ids)
-    _trim_topics(topics, config.pipeline.max_items_per_topic)
-    displayed = [summary for items in topics.values() for summary in items]
-    usage = merge_token_usage(prior_token_usage, response_token_usage(response))
-    return FinalBriefing(
-        date=generated_at.astimezone(timezone.utc).strftime("%Y-%m-%d"),
+    top_stories, other_stories = _partition_stories(selected)
+    return _build_briefing(
         overview_zh=overview.strip(),
-        topics=topics,
-        total_threads=len(displayed),
-        total_sources=len({name for summary in displayed for name in summary.source_names}),
+        top_stories=top_stories,
+        other_stories=other_stories,
         generated_at=generated_at,
-        token_usage=usage,
+        token_usage=merge_token_usage(prior_token_usage, response_token_usage(response)),
         model=str(getattr(response, "model", config.llm.model)),
     )
-def _parse_topic_item(
-    item: Any,
-    topic_name: str,
-    summary_lookup: dict[str, ThreadSummary],
-) -> ThreadSummary:
-    """Parse one topic item from a thread-id string."""
-
-    if not isinstance(item, str):
-        raise ValueError("Reduce-stage topic items must be thread id strings")
-    thread_id = item.strip()
-    if not thread_id:
-        raise ValueError("Reduce-stage topic items cannot include empty thread ids")
-    return _with_topic(_lookup_thread(thread_id, summary_lookup), topic_name)
 
 
-def _lookup_thread(thread_id: str, summary_lookup: dict[str, ThreadSummary]) -> ThreadSummary:
-    """Look up one thread id from the selected summaries."""
+def _partition_stories(
+    summaries: list[ThreadSummary],
+) -> tuple[list[ThreadSummary], list[ThreadSummary]]:
+    """Split summaries into top stories and secondary stories."""
 
-    try:
-        return summary_lookup[thread_id]
-    except KeyError as exc:
-        raise ValueError(f"Unknown thread_id returned by reduce-stage JSON: {thread_id}") from exc
+    top_stories: list[ThreadSummary] = []
+    other_stories: list[ThreadSummary] = []
+    for summary in summaries:
+        (top_stories if _is_top_story(summary) else other_stories).append(summary)
+    return top_stories, other_stories
 
 
-def _with_topic(summary: ThreadSummary, topic_name: str) -> ThreadSummary:
-    """Return a copy of a summary with a replaced topic."""
+def _is_top_story(summary: ThreadSummary) -> bool:
+    """Return whether a thread summary belongs in the top-stories section."""
 
-    return ThreadSummary(
-        thread_id=summary.thread_id,
-        topic=topic_name,
-        headline_zh=summary.headline_zh,
-        summary_zh=summary.summary_zh,
-        importance=summary.importance,
-        entities=list(summary.entities),
-        source_names=list(summary.source_names),
-        primary_link=summary.primary_link,
+    return summary.importance >= 6 or summary.effective_source_count >= 2
+
+
+def _build_briefing(
+    overview_zh: str,
+    top_stories: list[ThreadSummary],
+    other_stories: list[ThreadSummary],
+    generated_at: datetime,
+    token_usage: dict[str, int],
+    model: str,
+) -> FinalBriefing:
+    """Build a two-layer final briefing."""
+
+    displayed = top_stories + other_stories
+    return FinalBriefing(
+        date=generated_at.astimezone(timezone.utc).strftime("%Y-%m-%d"),
+        overview_zh=overview_zh,
+        top_stories=top_stories,
+        other_stories=other_stories,
+        total_threads=len(displayed),
+        total_sources=len({name for summary in displayed for name in summary.source_names}),
+        total_articles=sum(summary.article_count for summary in displayed),
+        generated_at=generated_at,
+        token_usage=token_usage,
+        model=model,
     )
-
-
-def _append_missing_summaries(
-    topics: dict[str, list[ThreadSummary]],
-    selected: list[ThreadSummary],
-    seen_thread_ids: set[str],
-) -> None:
-    """Keep omitted summaries by appending them under their original topic."""
-
-    missing = [summary for summary in selected if summary.thread_id not in seen_thread_ids]
-    if missing:
-        LOGGER.warning(
-            "Reduce-stage JSON omitted %s summaries; appending them with original topics",
-            len(missing),
-        )
-    for summary in missing:
-        topics.setdefault(summary.topic, []).append(summary)
-
-
-def _trim_topics(topics: dict[str, list[ThreadSummary]], limit: int) -> None:
-    """Trim each topic section to a maximum number of items."""
-
-    for topic_name, items in list(topics.items()):
-        topics[topic_name] = items[:limit]
 
 
 def _passes_summary_filters(summary: ThreadSummary, config: AppConfig) -> bool:

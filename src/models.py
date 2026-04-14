@@ -268,6 +268,16 @@ class ThreadSummary:
     entities: list[str]
     source_names: list[str]
     primary_link: str
+    topic_en: str = ""
+    source_count: int = 0
+    article_count: int = 1
+    all_links: list[tuple[str, str]] = field(default_factory=list)
+
+    @property
+    def effective_source_count(self) -> int:
+        """Return the explicit source count or infer it from source names."""
+
+        return self.source_count or len(self.source_names)
 
 
 @dataclass(frozen=True)
@@ -288,10 +298,17 @@ class FinalBriefing:
 
     date: str
     overview_zh: str
-    topics: dict[str, list[ThreadSummary]]
+    top_stories: list[ThreadSummary]
+    other_stories: list[ThreadSummary]
     total_threads: int
     total_sources: int
+    total_articles: int
     generated_at: datetime
     token_usage: dict[str, int]
     model: str
 
+    @property
+    def all_stories(self) -> list[ThreadSummary]:
+        """Return all stories in display order."""
+
+        return self.top_stories + self.other_stories

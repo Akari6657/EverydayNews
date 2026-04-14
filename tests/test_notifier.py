@@ -26,9 +26,11 @@ def _make_briefing() -> FinalBriefing:
     return FinalBriefing(
         date="2026-04-08",
         overview_zh="今日综述。",
-        topics={"国际政治": [summary]},
+        top_stories=[summary],
+        other_stories=[],
         total_threads=1,
         total_sources=1,
+        total_articles=1,
         generated_at=datetime.now(timezone.utc),
         token_usage={"input_tokens": 0, "output_tokens": 0},
         model="deepseek-chat",

@@ -68,9 +68,12 @@ def _build_context(
     """Build the template context dictionary."""
 
     return {
+        "date": briefing.date,
         "generated_at": briefing.generated_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         "source_names": _source_names_for_briefing(briefing, config),
-        "article_count": briefing.total_threads,
+        "article_count": briefing.total_articles,
+        "thread_count": briefing.total_threads,
+        "source_count": briefing.total_sources,
         "llm_content": _render_structured_markdown(briefing),
         "model": briefing.model,
         "input_tokens": briefing.token_usage.get("input_tokens", 0),
@@ -109,42 +112,52 @@ def _collect_briefing_sources(briefing: FinalBriefing) -> list[str]:
     """Collect distinct source names in stable order from a structured briefing."""
 
     names: list[str] = []
-    for items in briefing.topics.values():
-        for item in items:
-            for source_name in item.source_names:
-                if source_name not in names:
-                    names.append(source_name)
+    for item in briefing.all_stories:
+        for source_name in item.source_names:
+            if source_name not in names:
+                names.append(source_name)
     return names
 
 
 def _render_structured_markdown(briefing: FinalBriefing) -> str:
     """Render FinalBriefing content to a Markdown body string."""
 
-    lines: list[str] = [briefing.overview_zh.strip()]
-    if briefing.topics:
-        lines.append("")
-    for topic_name, items in briefing.topics.items():
-        lines.append(f"## {topic_name}")
-        lines.append("")
-        for item in items:
-            lines.extend(_thread_summary_lines(item))
+    lines: list[str] = [
+        "## 今日综述",
+        "",
+        briefing.overview_zh.strip(),
+    ]
+    if briefing.top_stories:
+        lines.extend(["", "---", "", "## 🔥 今日头条", ""])
+        for item in briefing.top_stories:
+            lines.extend(_top_story_lines(item))
             lines.append("")
-    return "\n".join(line for line in lines if line is not None).strip()
+    if briefing.other_stories:
+        lines.extend(["---", "", "## 📎 其他值得关注", ""])
+        for item in briefing.other_stories:
+            lines.extend(_other_story_lines(item))
+    return "\n".join(lines).strip()
 
 
-def _thread_summary_lines(item: ThreadSummary) -> list[str]:
-    """Render one structured summary into Markdown lines."""
+def _top_story_lines(item: ThreadSummary) -> list[str]:
+    """Render one top story into Markdown lines."""
 
     lines = [
         f"### {item.headline_zh}",
         item.summary_zh,
-        f"- 来源：{' / '.join(item.source_names)}",
-        f"- 链接：{item.primary_link}",
-        f"- 重要性：{item.importance}/10",
+        f"> 来源：{' · '.join(item.source_names)} · [原文]({item.primary_link}) · 重要性 {item.importance}/10",
     ]
     if item.entities:
-        lines.append(f"- 实体：{'、'.join(item.entities)}")
+        lines.insert(2, f"关键实体：{'、'.join(item.entities)}")
     return lines
+
+
+def _other_story_lines(item: ThreadSummary) -> list[str]:
+    """Render one secondary story as a compact bullet."""
+
+    return [
+        f"- **{item.headline_zh}** — {item.summary_zh} _（{'、'.join(item.source_names)}）_ · [原文]({item.primary_link})",
+    ]
 
 
 def _render_structured_json(briefing: FinalBriefing) -> str:

@@ -240,6 +240,10 @@ def _parse_thread_summary(item: dict[str, Any], thread: StoryThread) -> ThreadSu
         entities=entities,
         source_names=list(thread.source_names),
         primary_link=thread.primary.link,
+        topic_en=thread.topic_en,
+        source_count=thread.source_count,
+        article_count=len(thread.articles),
+        all_links=[(article.source_name, article.link) for article in thread.articles],
     )
 
 
