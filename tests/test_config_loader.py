@@ -83,7 +83,7 @@ def test_get_config_loads_yaml_and_env(tmp_path: Path, monkeypatch: pytest.Monke
     assert config.thread_clustering.max_articles_per_call == 150
     assert config.thread_clustering.max_articles_per_thread == 12
     assert config.thread_clustering.max_refinement_rounds == 1
-    assert config.ranking.importance_floor == 0.15
+    assert config.ranking.importance_floor == 0.0
     assert config.ranking.keep_major_always is True
     assert config.root_dir == tmp_path
 

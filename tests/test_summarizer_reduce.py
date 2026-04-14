@@ -215,22 +215,51 @@ def test_build_final_briefing_filters_below_importance_threshold(sample_config) 
     assert [item.thread_id for item in briefing.other_stories] == ["thread-2"]
 
 
-def test_build_final_briefing_keeps_multisource_story_even_at_lower_importance(sample_config) -> None:
-    """Multi-source stories should still land in the top-stories section."""
+def test_build_final_briefing_promotes_three_source_story_to_top(sample_config) -> None:
+    """A story with importance >= 5 and three or more sources should be a top story."""
 
     summaries = [
-        _summary("thread-1", importance=5, source_count=2, source_names=["BBC News", "NPR"]),
-        _summary("thread-2", importance=5, source_count=1, source_names=["BBC News"]),
+        _summary("thread-1", importance=5, source_count=3, source_names=["BBC News", "NPR", "Guardian"]),
+        _summary("thread-2", importance=5, source_count=2, source_names=["BBC News", "NPR"]),
+        _summary("thread-3", importance=5, source_count=1, source_names=["BBC News"]),
     ]
     response = FakeResponse(
-        choices=[FakeChoice(FakeMessage(json.dumps({"overview_zh": "多源报道仍然值得关注。"}, ensure_ascii=False)))]
+        choices=[FakeChoice(FakeMessage(json.dumps({"overview_zh": "多源广泛报道的事件值得关注。"}, ensure_ascii=False)))]
     )
     client = FakeClient([response])
 
     briefing = build_final_briefing(summaries, sample_config, client=client)
 
     assert [item.thread_id for item in briefing.top_stories] == ["thread-1"]
-    assert [item.thread_id for item in briefing.other_stories] == ["thread-2"]
+    assert {item.thread_id for item in briefing.other_stories} == {"thread-2", "thread-3"}
+
+
+def test_build_final_briefing_always_includes_high_importance_stories(sample_config) -> None:
+    """Stories with importance >= 8 should survive even when top_k is very small."""
+
+    config = replace(
+        sample_config,
+        summarizer=replace(
+            sample_config.summarizer,
+            reduce=replace(sample_config.summarizer.reduce, top_k=1),
+        ),
+    )
+    summaries = [
+        _summary("thread-1", importance=6),
+        _summary("thread-2", importance=8),
+        _summary("thread-3", importance=9),
+    ]
+    response = FakeResponse(
+        choices=[FakeChoice(FakeMessage(json.dumps({"overview_zh": "高重要性事件不受 top_k 截断。"}, ensure_ascii=False)))]
+    )
+    client = FakeClient([response])
+
+    briefing = build_final_briefing(summaries, config, client=client)
+
+    included_ids = {item.thread_id for item in briefing.all_stories}
+    assert "thread-2" in included_ids
+    assert "thread-3" in included_ids
+    assert "thread-1" not in included_ids
 
 
 def test_build_final_briefing_filters_noise_keywords(sample_config) -> None:

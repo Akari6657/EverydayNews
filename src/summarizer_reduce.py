@@ -70,7 +70,12 @@ def count_reduce_candidates(summaries: list[ThreadSummary], config: AppConfig) -
 
 
 def _select_summaries(summaries: list[ThreadSummary], config: AppConfig) -> list[ThreadSummary]:
-    """Select the top summaries that should participate in reduce."""
+    """Select the top summaries that should participate in reduce.
+
+    Stories with importance >= 8 are always included regardless of top_k so that
+    critical breaking news is never cut by the soft cap.  The remaining slots up
+    to top_k are filled from the lower-importance tier in ranked order.
+    """
 
     filtered = [
         summary
@@ -86,7 +91,10 @@ def _select_summaries(summaries: list[ThreadSummary], config: AppConfig) -> list
             summary.thread_id,
         ),
     )
-    return ranked[: config.summarizer.reduce.top_k]
+    must_include = [s for s in ranked if s.importance >= 8]
+    fill = [s for s in ranked if s.importance < 8]
+    fill_limit = max(0, config.summarizer.reduce.top_k - len(must_include))
+    return must_include + fill[:fill_limit]
 
 
 def _empty_briefing(
@@ -286,9 +294,17 @@ def _partition_stories(
 
 
 def _is_top_story(summary: ThreadSummary) -> bool:
-    """Return whether a thread summary belongs in the top-stories section."""
+    """Return whether a thread summary belongs in the top-stories section.
 
-    return summary.importance >= 6 or summary.effective_source_count >= 2
+    A story qualifies as a top story when the LLM rates it highly important (>= 7),
+    or when it is broadly covered by at least three distinct sources and has meaningful
+    importance (>= 5).  This avoids promoting two-source routine coverage that would
+    dilute the headline section.
+    """
+
+    return summary.importance >= 7 or (
+        summary.importance >= 5 and summary.effective_source_count >= 3
+    )
 
 
 def _build_briefing(

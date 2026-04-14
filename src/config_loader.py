@@ -239,7 +239,7 @@ def _parse_ranking(payload: dict[str, Any]) -> RankingConfig:
 
     section = _mapping(payload, "ranking", required=False)
     if not section:
-        return RankingConfig(importance_floor=0.15, keep_major_always=True)
+        return RankingConfig(importance_floor=0.0, keep_major_always=True)
     return RankingConfig(
         importance_floor=_float(section, "importance_floor", 0.15),
         keep_major_always=_bool(section, "keep_major_always", True),

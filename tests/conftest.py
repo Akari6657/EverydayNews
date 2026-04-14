@@ -101,7 +101,7 @@ def sample_config(tmp_path: Path) -> AppConfig:
             max_refinement_rounds=1,
         ),
         ranking=RankingConfig(
-            importance_floor=0.15,
+            importance_floor=0.0,
             keep_major_always=True,
         ),
     )

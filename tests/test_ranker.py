@@ -55,7 +55,7 @@ def test_rank_threads_prefers_multi_source_recent_threads(sample_config, make_ar
 
 
 def test_rank_threads_respects_floor_for_single_source_threads(sample_config, make_article) -> None:
-    """Old low-signal single-source threads should fall below the ranking floor."""
+    """Old low-signal single-source threads should fall below an explicit ranking floor."""
 
     config = replace(
         sample_config,
@@ -81,3 +81,29 @@ def test_rank_threads_respects_floor_for_single_source_threads(sample_config, ma
     ranked = rank_threads([stale_thread], config, now=now)
 
     assert ranked == []
+
+
+def test_rank_threads_keeps_old_single_source_thread_by_default(sample_config, make_article) -> None:
+    """With default importance_floor=0.0, old single-source threads should not be filtered."""
+
+    now = datetime(2026, 4, 8, 12, 0, tzinfo=timezone.utc)
+    old_article = make_article(
+        guid="old-1",
+        published=now - timedelta(hours=20),
+    )
+    old_thread = StoryThread(
+        thread_id=1,
+        topic="重要深度报道",
+        topic_en="Important analysis",
+        articles=[old_article],
+        source_names=["New York Times"],
+        source_count=1,
+        primary=old_article,
+        latest_published=old_article.published,
+        rationale="测试",
+    )
+
+    ranked = rank_threads([old_thread], sample_config, now=now)
+
+    assert len(ranked) == 1
+    assert ranked[0].topic == "重要深度报道"

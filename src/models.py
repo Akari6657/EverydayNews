@@ -186,7 +186,7 @@ class AppConfig:
     )
     ranking: RankingConfig = field(
         default_factory=lambda: RankingConfig(
-            importance_floor=0.15,
+            importance_floor=0.0,
             keep_major_always=True,
         )
     )
