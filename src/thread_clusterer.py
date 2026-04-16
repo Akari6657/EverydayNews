@@ -6,6 +6,7 @@ import logging
 import re
 import time
 from collections import Counter
+from itertools import chain
 from typing import Any, Sequence
 
 from .llm_utils import chunked, create_client, extract_response_text, load_json_payload
@@ -13,8 +14,10 @@ from .models import AppConfig, Article, StoryThread
 from .prompts import (
     THREAD_CLUSTERING_JSON_RETRY_SUFFIX,
     THREAD_CLUSTERING_PROMPT_TEMPLATE,
-    THREAD_REFINEMENT_PROMPT_TEMPLATE,
     THREAD_CLUSTERING_SYSTEM_PROMPT,
+    THREAD_MERGE_JSON_RETRY_SUFFIX,
+    THREAD_MERGE_PROMPT_TEMPLATE,
+    THREAD_REFINEMENT_PROMPT_TEMPLATE,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -50,6 +53,7 @@ def cluster_into_threads(
         threads = _one_per_thread_fallback(clusterable_articles, config)
         return _renumber_threads(_sort_threads(threads + wrapper_threads))
     threads = _build_story_threads(raw_threads, clusterable_articles, config)
+    threads = _merge_overlapping_threads(threads, config)
     refined_threads = _refine_threads(threads, config, llm_client)
     return _renumber_threads(_sort_threads(refined_threads + wrapper_threads))
 
@@ -70,7 +74,12 @@ def _cluster_large_article_set(
     threads: list[StoryThread] = []
     for chunk in chunked(articles, max_per_call):
         threads.extend(cluster_into_threads(chunk, config, client=client))
-    return _renumber_threads(_sort_threads(threads))
+    # Renumber before merge pass so every thread_id is unique across chunks
+    threads = _renumber_threads(_sort_threads(threads))
+    if config.thread_clustering.enable_chunk_merge:
+        llm_client = client or create_client(config)
+        threads = _merge_chunk_threads_via_llm(threads, config, llm_client)
+    return threads
 
 
 def _request_threads_payload(
@@ -358,6 +367,11 @@ def _is_generic_wrapper_title(title: str) -> bool:
         or normalized.startswith("morning news brief")
         or normalized.startswith("what to know")
         or normalized.startswith("what we know")
+        or normalized.startswith("up first")
+        or normalized.startswith("daily briefing")
+        or normalized.startswith("evening briefing")
+        or normalized.startswith("today in news")
+        or normalized.startswith("week in review")
     )
 
 
@@ -524,3 +538,163 @@ def _meaningful_tokens(title: str) -> list[str]:
         for token in title.split()
         if len(token) >= 4 and token not in stopwords
     ]
+
+
+def _combine_thread_group(group: list[StoryThread], config: AppConfig) -> StoryThread:
+    """Merge a list of StoryThreads into one, preferring the topic of the most-sourced thread."""
+
+    primary = max(group, key=lambda t: (t.source_count, len(t.articles)))
+    seen_urls: set[str] = set()
+    combined_articles: list[Article] = []
+    for thread in group:
+        for article in thread.articles:
+            if article.link not in seen_urls:
+                seen_urls.add(article.link)
+                combined_articles.append(article)
+    return _make_story_thread(
+        topic=primary.topic,
+        topic_en=primary.topic_en,
+        rationale=f"聚类后合并（{len(group)} 条线）",
+        articles=combined_articles,
+        config=config,
+    )
+
+
+def _merge_overlapping_threads(
+    threads: list[StoryThread],
+    config: AppConfig,
+) -> list[StoryThread]:
+    """Merge threads whose article titles share substantial token overlap (Jaccard ≥ threshold).
+
+    Runs on the non-chunked path as a safety net after _post_process_threads.
+    Uses union-find so transitive overlaps are handled correctly.
+    """
+
+    if len(threads) <= 1 or not config.thread_clustering.enable_post_merge:
+        return threads
+
+    threshold = config.thread_clustering.merge_overlap_threshold
+
+    def _thread_tokens(t: StoryThread) -> frozenset[str]:
+        return frozenset(chain.from_iterable(
+            _meaningful_tokens(_normalize_title(article.title)) for article in t.articles
+        ))
+
+    token_sets = [_thread_tokens(t) for t in threads]
+
+    parent = list(range(len(threads)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for i in range(len(threads)):
+        for j in range(i + 1, len(threads)):
+            a, b = token_sets[i], token_sets[j]
+            if not a or not b:
+                continue
+            jaccard = len(a & b) / len(a | b)
+            if jaccard >= threshold:
+                ri, rj = find(i), find(j)
+                if ri != rj:
+                    parent[rj] = ri
+
+    groups: dict[int, list[int]] = {}
+    for i in range(len(threads)):
+        groups.setdefault(find(i), []).append(i)
+
+    result: list[StoryThread] = []
+    for indices in groups.values():
+        group = [threads[i] for i in indices]
+        if len(group) == 1:
+            result.append(group[0])
+        else:
+            LOGGER.info(
+                "Heuristic merge: combining %s overlapping threads: %s",
+                len(group),
+                [t.topic for t in group],
+            )
+            result.append(_combine_thread_group(group, config))
+    return result
+
+
+def _build_thread_topics_payload(threads: list[StoryThread]) -> str:
+    """Render a compact thread-topic list for the LLM merge prompt."""
+
+    return "\n".join(
+        f"[{t.thread_id}] \"{t.topic}\" / {t.topic_en} "
+        f"({len(t.articles)}篇, {' / '.join(t.source_names[:3])})"
+        for t in threads
+    )
+
+
+def _merge_chunk_threads_via_llm(
+    threads: list[StoryThread],
+    config: AppConfig,
+    client: Any,
+) -> list[StoryThread]:
+    """Ask the LLM to merge duplicate threads produced by independent chunk clustering.
+
+    This is a best-effort pass — on any failure the original threads are returned unchanged.
+    """
+
+    if len(threads) <= 1 or not config.thread_clustering.enable_chunk_merge:
+        return threads
+
+    payload = _build_thread_topics_payload(threads)
+    prompt = THREAD_MERGE_PROMPT_TEMPLATE.format(threads_payload=payload)
+    for attempt in range(config.thread_clustering.max_retries):
+        try:
+            response = _request_threads(client, config, prompt)
+            raw_text = extract_response_text(response)
+            merge_data = load_json_payload(raw_text)
+            break
+        except Exception as exc:
+            if attempt == config.thread_clustering.max_retries - 1:
+                LOGGER.warning("Thread merge LLM call failed, keeping chunks separate: %s", exc)
+                return threads
+            LOGGER.warning("Thread merge attempt %s failed: %s", attempt + 1, exc)
+            prompt = prompt + THREAD_MERGE_JSON_RETRY_SUFFIX
+            time.sleep(2**attempt)
+
+    merges = merge_data.get("merges", [])
+    if not isinstance(merges, list) or not merges:
+        return threads
+
+    threads_by_id = {t.thread_id: t for t in threads}
+    merged_ids: set[int] = set()
+    result: list[StoryThread] = []
+
+    for merge_spec in merges:
+        ids = merge_spec.get("ids", [])
+        if not isinstance(ids, list) or len(ids) < 2:
+            continue
+        group = [threads_by_id[i] for i in ids if i in threads_by_id]
+        if len(group) < 2:
+            continue
+        combined = _combine_thread_group(group, config)
+        new_topic = merge_spec.get("topic", "").strip()
+        new_topic_en = merge_spec.get("topic_en", "").strip()
+        if new_topic:
+            combined = StoryThread(
+                thread_id=combined.thread_id,
+                topic=new_topic,
+                topic_en=new_topic_en or combined.topic_en,
+                articles=combined.articles,
+                source_names=combined.source_names,
+                source_count=combined.source_count,
+                primary=combined.primary,
+                latest_published=combined.latest_published,
+                rationale=combined.rationale,
+            )
+        result.append(combined)
+        merged_ids.update(ids)
+        LOGGER.info("LLM merge pass: combined threads %s → '%s'", ids, combined.topic)
+
+    for t in threads:
+        if t.thread_id not in merged_ids:
+            result.append(t)
+
+    return result

@@ -231,6 +231,9 @@ def _parse_thread_clustering(payload: dict[str, Any]) -> ThreadClusteringConfig:
         max_articles_per_call=_int(section, "max_articles_per_call", default=150, positive=True),
         max_articles_per_thread=_int(section, "max_articles_per_thread", default=12, positive=True),
         max_refinement_rounds=_int(section, "max_refinement_rounds", default=1, positive=True),
+        enable_post_merge=_bool(section, "enable_post_merge", default=True),
+        merge_overlap_threshold=_float(section, "merge_overlap_threshold", default=0.30),
+        enable_chunk_merge=_bool(section, "enable_chunk_merge", default=True),
     )
 
 

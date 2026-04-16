@@ -6,7 +6,12 @@ import json
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 
-from src.thread_clusterer import cluster_into_threads
+from src.thread_clusterer import (
+    _is_generic_wrapper_title,
+    _merge_chunk_threads_via_llm,
+    _merge_overlapping_threads,
+    cluster_into_threads,
+)
 
 
 @dataclass
@@ -374,3 +379,178 @@ def _thread_response(threads: list[dict[str, object]]) -> FakeResponse:
 
     payload = {"threads": threads}
     return FakeResponse(choices=[FakeChoice(FakeMessage(json.dumps(payload, ensure_ascii=False)))])
+
+
+def _merge_response(merges: list[dict[str, object]]) -> FakeResponse:
+    """Return one valid thread-merge response."""
+
+    payload = {"merges": merges}
+    return FakeResponse(choices=[FakeChoice(FakeMessage(json.dumps(payload, ensure_ascii=False)))])
+
+
+# ---------------------------------------------------------------------------
+# Expanded wrapper-title detection
+# ---------------------------------------------------------------------------
+
+
+def test_expanded_wrapper_title_detection(sample_config, make_article):
+    """New wrapper patterns are isolated as singletons without LLM clustering."""
+
+    wrapper_titles = [
+        "Up First: Trump signs Iran deal",
+        "Up First Newsletter — what you need to know",
+        "Daily Briefing: top stories today",
+        "Evening Briefing: the news at dusk",
+        "Week in Review: biggest stories",
+    ]
+    articles = [make_article(title=t, source_name="NPR") for t in wrapper_titles]
+    # One regular article so LLM would normally be called
+    articles.append(make_article(title="Iran ceasefire signed", source_name="BBC News"))
+
+    client = FakeClient([
+        _thread_response([{"thread_id": 1, "topic": "伊朗停火", "topic_en": "Iran Ceasefire", "article_ids": [1], "rationale": "only real article"}])
+    ])
+    threads = cluster_into_threads(articles, sample_config, client=client)
+
+    wrapper_thread_topics = {t.topic for t in threads if len(t.articles) == 1 and _is_generic_wrapper_title(t.articles[0].title)}
+    assert len(wrapper_thread_topics) == len(wrapper_titles)
+    # LLM was called exactly once (for the one real article)
+    assert len(client.chat.completions.calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# Heuristic cross-thread merge
+# ---------------------------------------------------------------------------
+
+
+def test_overlapping_threads_merged_by_heuristic(sample_config, make_article):
+    """Two threads with highly overlapping article titles are merged heuristically."""
+
+    config = replace(
+        sample_config,
+        thread_clustering=replace(
+            sample_config.thread_clustering,
+            enable_post_merge=True,
+            merge_overlap_threshold=0.20,
+        ),
+    )
+    # Both threads are about Iran ceasefire from different angles; many shared tokens
+    articles_a = [
+        make_article(title="Iran ceasefire talks progress in Geneva", source_name="NYT", link="https://nyt.com/1"),
+        make_article(title="Iran nuclear ceasefire deal signed", source_name="BBC News", link="https://bbc.com/1"),
+    ]
+    articles_b = [
+        make_article(title="Iran ceasefire agreement reached after talks", source_name="Guardian", link="https://guardian.com/1"),
+    ]
+
+    client = FakeClient([
+        _thread_response([
+            {"thread_id": 1, "topic": "伊朗停火谈判", "topic_en": "Iran Ceasefire Talks", "article_ids": [1, 2], "rationale": "same ceasefire"},
+            {"thread_id": 2, "topic": "伊朗停火协议", "topic_en": "Iran Ceasefire Agreement", "article_ids": [3], "rationale": "agreement signed"},
+        ])
+    ])
+    threads = cluster_into_threads(articles_a + articles_b, config, client=client)
+
+    # The two Iran ceasefire threads should have been merged into one
+    assert len(threads) == 1
+    assert len(threads[0].articles) == 3
+
+
+def test_distinct_threads_not_merged(sample_config, make_article):
+    """Threads about unrelated events are not merged by the heuristic."""
+
+    config = replace(
+        sample_config,
+        thread_clustering=replace(
+            sample_config.thread_clustering,
+            enable_post_merge=True,
+            merge_overlap_threshold=0.30,
+        ),
+    )
+    articles = [
+        make_article(title="Iran ceasefire signed in Geneva", source_name="NYT"),
+        make_article(title="European carbon tax reform passed", source_name="BBC News"),
+    ]
+    client = FakeClient([
+        _thread_response([
+            {"thread_id": 1, "topic": "伊朗停火", "topic_en": "Iran Ceasefire", "article_ids": [1], "rationale": "ceasefire"},
+            {"thread_id": 2, "topic": "欧盟碳税", "topic_en": "EU Carbon Tax", "article_ids": [2], "rationale": "carbon tax"},
+        ])
+    ])
+    threads = cluster_into_threads(articles, config, client=client)
+
+    assert len(threads) == 2
+
+
+# ---------------------------------------------------------------------------
+# LLM merge pass for chunked clustering
+# ---------------------------------------------------------------------------
+
+
+def test_chunk_merge_llm_pass(sample_config, make_article, monkeypatch):
+    """After chunked clustering, the LLM merge pass combines duplicate threads."""
+
+    monkeypatch.setattr("src.thread_clusterer.time.sleep", lambda _: None)
+    config = replace(
+        sample_config,
+        thread_clustering=replace(
+            sample_config.thread_clustering,
+            max_articles_per_call=2,   # force chunking with 4 articles
+            enable_chunk_merge=True,
+            enable_post_merge=False,
+        ),
+    )
+    # 4 articles split into 2 chunks of 2; each chunk produces one Iran thread
+    articles = [
+        make_article(title="Iran ceasefire talks", source_name="NYT", link="https://nyt.com/1"),
+        make_article(title="Iran diplomacy progress", source_name="BBC News", link="https://bbc.com/1"),
+        make_article(title="Iran deal signed today", source_name="Guardian", link="https://guardian.com/1"),
+        make_article(title="Iran nuclear agreement reached", source_name="Al Jazeera English", link="https://aje.com/1"),
+    ]
+
+    # Chunk 1 produces thread_id=1 (Iran), chunk 2 produces thread_id=1 (also Iran)
+    # Then the merge pass sees two threads and merges them
+    client = FakeClient([
+        # Chunk 1 clustering
+        _thread_response([{"thread_id": 1, "topic": "伊朗谈判", "topic_en": "Iran Talks", "article_ids": [1, 2], "rationale": "chunk1"}]),
+        # Chunk 2 clustering
+        _thread_response([{"thread_id": 1, "topic": "伊朗协议", "topic_en": "Iran Deal", "article_ids": [1, 2], "rationale": "chunk2"}]),
+        # LLM merge pass
+        _merge_response([{"ids": [1, 2], "topic": "伊朗停火与外交", "topic_en": "Iran Ceasefire and Diplomacy"}]),
+    ])
+    threads = cluster_into_threads(articles, config, client=client)
+
+    assert len(threads) == 1
+    assert threads[0].topic == "伊朗停火与外交"
+    assert len(threads[0].articles) == 4
+
+
+def test_chunk_merge_falls_back_on_llm_failure(sample_config, make_article, monkeypatch):
+    """If the merge LLM call raises an exception, threads are returned unchanged."""
+
+    monkeypatch.setattr("src.thread_clusterer.time.sleep", lambda _: None)
+    config = replace(
+        sample_config,
+        thread_clustering=replace(
+            sample_config.thread_clustering,
+            max_articles_per_call=2,
+            max_retries=1,
+            enable_chunk_merge=True,
+            enable_post_merge=False,
+        ),
+    )
+    articles = [
+        make_article(title="Iran ceasefire talks", source_name="NYT"),
+        make_article(title="Iran diplomacy progress", source_name="BBC News"),
+        make_article(title="EU carbon tax vote", source_name="Guardian"),
+        make_article(title="European emissions reform", source_name="DW"),
+    ]
+    client = FakeClient([
+        _thread_response([{"thread_id": 1, "topic": "伊朗谈判", "topic_en": "Iran", "article_ids": [1, 2], "rationale": ""}]),
+        _thread_response([{"thread_id": 1, "topic": "欧盟碳税", "topic_en": "EU Tax", "article_ids": [1, 2], "rationale": ""}]),
+        RuntimeError("LLM unavailable"),   # merge pass fails
+    ])
+    threads = cluster_into_threads(articles, config, client=client)
+
+    # Fallback: both original threads kept
+    assert len(threads) == 2

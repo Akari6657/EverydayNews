@@ -151,6 +151,9 @@ class ThreadClusteringConfig:
     max_articles_per_call: int
     max_articles_per_thread: int
     max_refinement_rounds: int
+    enable_post_merge: bool = True
+    merge_overlap_threshold: float = 0.30
+    enable_chunk_merge: bool = True
 
 
 @dataclass(frozen=True)
@@ -182,6 +185,9 @@ class AppConfig:
             max_articles_per_call=150,
             max_articles_per_thread=12,
             max_refinement_rounds=1,
+            enable_post_merge=True,
+            merge_overlap_threshold=0.30,
+            enable_chunk_merge=True,
         )
     )
     ranking: RankingConfig = field(

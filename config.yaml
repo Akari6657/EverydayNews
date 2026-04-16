@@ -85,6 +85,9 @@ thread_clustering:
   max_articles_per_call: 150
   max_articles_per_thread: 12
   max_refinement_rounds: 1
+  enable_post_merge: true
+  merge_overlap_threshold: 0.30
+  enable_chunk_merge: true
 
 ranking:
   importance_floor: 0.15
