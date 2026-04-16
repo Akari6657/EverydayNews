@@ -126,6 +126,9 @@ python -m src.main --config config.tech.yaml
 | `output/md/YYYY-MM/briefing-YYYY-MM-DD.md` | Markdown 简报 |
 | `output/json/YYYY-MM/briefing-YYYY-MM-DD.json` | 结构化 JSON |
 | `output/eval/eval-YYYY-MM-DD.json` | 质量评分（需加 `--eval`） |
+| `output/metrics.jsonl` | 每次运行追加一行 JSON 指标，记录抓取量、故事线数量、token 使用、阶段耗时、fallback 与错误信息 |
+
+无论是标准运行、`--dry-run` 还是 `--dump-threads`，只要配置成功加载，都会追加一条运行指标到 `output/metrics.jsonl`。
 
 ## 开发
 
