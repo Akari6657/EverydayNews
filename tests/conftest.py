@@ -48,12 +48,8 @@ def sample_config(tmp_path: Path) -> AppConfig:
         ],
         pipeline=PipelineConfig(
             max_articles_per_source=10,
-            total_articles_for_summary=5,
             importance_threshold=4,
-            max_items_per_topic=4,
             exclude_summary_keywords=["最新动态", "持续更新"],
-            language="zh-CN",
-            briefing_style="concise",
         ),
         dedup=DedupConfig(
             method="difflib",
@@ -74,7 +70,7 @@ def sample_config(tmp_path: Path) -> AppConfig:
             temperature=0.3,
         ),
         output=OutputConfig(
-            markdown=MarkdownOutputConfig(enabled=True, directory="output/md", group_by_month=True),
+            markdown=MarkdownOutputConfig(directory="output/md", group_by_month=True),
             json=JsonOutputConfig(enabled=True, directory="output/json", group_by_month=True),
             email=EmailOutputConfig(
                 enabled=False,

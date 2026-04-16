@@ -28,15 +28,11 @@ class SourceConfig:
 
 @dataclass(frozen=True)
 class PipelineConfig:
-    """Pipeline-level tuning options."""
+    """Active pipeline-level tuning options."""
 
     max_articles_per_source: int
-    total_articles_for_summary: int
     importance_threshold: int
-    max_items_per_topic: int
     exclude_summary_keywords: list[str]
-    language: str
-    briefing_style: str
 
 
 @dataclass(frozen=True)
@@ -89,7 +85,6 @@ class LLMConfig:
 class MarkdownOutputConfig:
     """Markdown delivery settings."""
 
-    enabled: bool
     directory: str
     group_by_month: bool
 

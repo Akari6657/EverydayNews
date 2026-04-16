@@ -134,17 +134,13 @@ def _parse_source(raw_source: dict[str, Any]) -> SourceConfig:
 
 
 def _parse_pipeline(payload: dict[str, Any]) -> PipelineConfig:
-    """Parse pipeline settings."""
+    """Parse active pipeline settings."""
 
     section = _mapping(payload, "pipeline")
     return PipelineConfig(
         max_articles_per_source=_int(section, "max_articles_per_source"),
-        total_articles_for_summary=_int(section, "total_articles_for_summary"),
         importance_threshold=_int(section, "importance_threshold", default=4, minimum=0, maximum=10),
-        max_items_per_topic=_int(section, "max_items_per_topic", default=4, positive=True),
         exclude_summary_keywords=_string_list(section, "exclude_summary_keywords"),
-        language=_string(section, "language"),
-        briefing_style=_string(section, "briefing_style"),
     )
 
 
@@ -264,7 +260,6 @@ def _parse_markdown_output(section: dict[str, Any]) -> MarkdownOutputConfig:
     """Parse markdown output settings."""
 
     return MarkdownOutputConfig(
-        enabled=_bool(section, "enabled"),
         directory=_string(section, "directory"),
         group_by_month=_bool(section, "group_by_month", True),
     )

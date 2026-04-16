@@ -18,9 +18,6 @@ sources:
         category: top
 pipeline:
   max_articles_per_source: 10
-  total_articles_for_summary: 20
-  language: zh-CN
-  briefing_style: concise
 llm:
   provider: deepseek
   model: deepseek-chat
@@ -30,7 +27,6 @@ llm:
   temperature: 0.3
 output:
   markdown:
-    enabled: true
     directory: {markdown_directory}
   email:
     enabled: false
@@ -75,7 +71,6 @@ def test_get_config_loads_yaml_and_env(tmp_path: Path, monkeypatch: pytest.Monke
     assert config.summarizer.map.batch_size == 5
     assert config.llm.model == "deepseek-chat"
     assert config.pipeline.importance_threshold == 4
-    assert config.pipeline.max_items_per_topic == 4
     assert config.pipeline.exclude_summary_keywords == []
     assert config.output.markdown.group_by_month is True
     assert config.output.json.directory == "output/json"
@@ -96,6 +91,58 @@ def test_get_config_rejects_missing_sources(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigError):
         get_config(config_path=config_path, env_path=tmp_path / ".env")
+
+
+def test_get_config_ignores_legacy_pipeline_and_markdown_keys(tmp_path: Path) -> None:
+    """Legacy config keys should be ignored rather than breaking loading."""
+
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+sources:
+  - name: Example
+    slug: example
+    feeds:
+      - url: https://example.com/rss.xml
+        category: top
+pipeline:
+  max_articles_per_source: 10
+  total_articles_for_summary: 20
+  max_items_per_topic: 4
+  language: zh-CN
+  briefing_style: concise
+llm:
+  provider: deepseek
+  model: deepseek-chat
+  base_url: https://api.deepseek.com
+  api_key_env: DEEPSEEK_API_KEY
+  max_tokens: 4096
+  temperature: 0.3
+output:
+  markdown:
+    enabled: true
+    directory: output/md
+  email:
+    enabled: false
+    smtp_host: ""
+    smtp_port: 587
+    sender: ""
+    recipients: []
+  telegram:
+    enabled: false
+    bot_token_env: TELEGRAM_BOT_TOKEN
+    chat_id_env: TELEGRAM_CHAT_ID
+schedule:
+  timezone: Asia/Shanghai
+  run_at: "08:00"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    config = get_config(config_path=config_path, env_path=tmp_path / ".env")
+
+    assert config.pipeline.importance_threshold == 4
+    assert config.output.markdown.directory == "output/md"
 
 
 @pytest.mark.parametrize(
