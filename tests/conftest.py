@@ -96,6 +96,7 @@ def sample_config(tmp_path: Path) -> AppConfig:
             max_articles_per_thread=12,
             max_refinement_rounds=1,
             temperature=0.5,
+            max_tokens=16384,
         ),
         ranking=RankingConfig(
             importance_floor=0.0,

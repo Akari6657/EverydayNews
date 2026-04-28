@@ -217,6 +217,7 @@ def _parse_thread_clustering(payload: dict[str, Any]) -> ThreadClusteringConfig:
             max_articles_per_thread=12,
             max_refinement_rounds=1,
             temperature=0.5,
+            max_tokens=16384,
         )
     provider = _string(section, "provider", default_provider)
     if provider != "deepseek":
@@ -232,6 +233,7 @@ def _parse_thread_clustering(payload: dict[str, Any]) -> ThreadClusteringConfig:
         merge_overlap_threshold=_float(section, "merge_overlap_threshold", default=0.30),
         enable_chunk_merge=_bool(section, "enable_chunk_merge", default=True),
         temperature=_float(section, "temperature", 0.5),
+        max_tokens=_int(section, "max_tokens", default=16384, positive=True),
     )
 
 

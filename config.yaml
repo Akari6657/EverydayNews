@@ -84,7 +84,8 @@ thread_clustering:
   enable_post_merge: true
   merge_overlap_threshold: 0.30
   enable_chunk_merge: true
-  temperature: 0.5
+  temperature: 0.3
+  max_tokens: 16384
 
 ranking:
   importance_floor: 0.15

@@ -150,6 +150,7 @@ class ThreadClusteringConfig:
     merge_overlap_threshold: float = 0.30
     enable_chunk_merge: bool = True
     temperature: float = 0.5
+    max_tokens: int = 16384
 
 
 @dataclass(frozen=True)

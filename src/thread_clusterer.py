@@ -107,9 +107,20 @@ def _request_threads_payload(
             return _extract_threads(payload)
         except (ValueError, TypeError) as exc:
             if attempt == config.thread_clustering.max_retries - 1:
-                LOGGER.error("%s failed after invalid JSON retries: %s", stage_label, exc)
+                LOGGER.error(
+                    "%s failed after invalid JSON retries: %s | raw response (first 500 chars): %s",
+                    stage_label,
+                    exc,
+                    repr(raw_text[:500]),
+                )
                 return None
-            LOGGER.warning("Invalid %s JSON on attempt %s: %s", stage_label.lower(), attempt + 1, exc)
+            LOGGER.warning(
+                "Invalid %s JSON on attempt %s: %s | raw response (first 500 chars): %s",
+                stage_label.lower(),
+                attempt + 1,
+                exc,
+                repr(raw_text[:500]),
+            )
             prompt = prompt + THREAD_CLUSTERING_JSON_RETRY_SUFFIX
             time.sleep(2**attempt)
     return None
@@ -121,7 +132,7 @@ def _request_threads(client: Any, config: AppConfig, prompt: str) -> Any:
     return client.chat.completions.create(
         model=config.thread_clustering.model,
         temperature=config.thread_clustering.temperature,
-        max_tokens=config.llm.max_tokens,
+        max_tokens=config.thread_clustering.max_tokens,
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": THREAD_CLUSTERING_SYSTEM_PROMPT},
