@@ -84,10 +84,13 @@ thread_clustering:
   enable_post_merge: true
   merge_overlap_threshold: 0.30
   enable_chunk_merge: true
+  temperature: 0.5
 
 ranking:
   importance_floor: 0.15
   keep_major_always: true
+  source_weight: 0.65
+  recency_weight: 0.35
 
 summarizer:
   map:

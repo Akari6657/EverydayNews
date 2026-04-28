@@ -120,7 +120,7 @@ def _request_threads(client: Any, config: AppConfig, prompt: str) -> Any:
 
     return client.chat.completions.create(
         model=config.thread_clustering.model,
-        temperature=config.llm.temperature,
+        temperature=config.thread_clustering.temperature,
         max_tokens=config.llm.max_tokens,
         response_format={"type": "json_object"},
         messages=[

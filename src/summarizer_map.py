@@ -58,7 +58,7 @@ def summarize_threads_with_usage(
     batches_total = 0
     batches_failed = 0
     threads_skipped = 0
-    batch_size = min(config.summarizer.map.batch_size, 4)
+    batch_size = config.summarizer.map.batch_size
     for batch in chunked(threads, batch_size):
         (
             batch_summaries,

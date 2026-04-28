@@ -84,7 +84,8 @@ def test_within_thread_dedup_merges_near_duplicate_articles(sample_config, make_
 
     assert len(deduplicated.articles) == 2
     assert deduplicated.primary.guid == "a1"
-    assert deduplicated.source_count == 3
+    assert deduplicated.source_count == 2
+    assert deduplicated.source_names == ["New York Times", "Reuters"]
     assert diagnostics.before_articles == 3
     assert diagnostics.after_articles == 2
     assert len(diagnostics.merged_pairs) == 1

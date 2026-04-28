@@ -149,6 +149,7 @@ class ThreadClusteringConfig:
     enable_post_merge: bool = True
     merge_overlap_threshold: float = 0.30
     enable_chunk_merge: bool = True
+    temperature: float = 0.5
 
 
 @dataclass(frozen=True)
@@ -157,6 +158,8 @@ class RankingConfig:
 
     importance_floor: float
     keep_major_always: bool
+    source_weight: float = 0.65
+    recency_weight: float = 0.35
 
 
 @dataclass(frozen=True)

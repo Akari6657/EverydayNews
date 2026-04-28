@@ -18,7 +18,7 @@ def rank_threads(
     ranked = sorted(
         threads,
         key=lambda thread: (
-            -thread_priority(thread, reference_time),
+            -thread_priority(thread, reference_time, config),
             -thread.source_count,
             -thread.latest_published.timestamp(),
             thread.topic,
@@ -26,7 +26,7 @@ def rank_threads(
     )
     kept: list[StoryThread] = []
     for thread in ranked:
-        priority = thread_priority(thread, reference_time)
+        priority = thread_priority(thread, reference_time, config)
         if config.ranking.keep_major_always and thread.is_multi_source:
             kept.append(thread)
             continue
@@ -35,11 +35,11 @@ def rank_threads(
     return kept
 
 
-def thread_priority(thread: StoryThread, now: datetime) -> float:
+def thread_priority(thread: StoryThread, now: datetime, config: AppConfig) -> float:
     """Return a 0-1 priority score from source coverage and recency."""
 
-    source_score = min((thread.source_count - 1) / 2.0, 1.0) * 0.65
-    recency_score = _recency_factor(thread.latest_published, now) * 0.35
+    source_score = min((thread.source_count - 1) / 2.0, 1.0) * config.ranking.source_weight
+    recency_score = _recency_factor(thread.latest_published, now) * config.ranking.recency_weight
     return source_score + recency_score
 
 

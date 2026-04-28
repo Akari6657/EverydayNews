@@ -216,6 +216,7 @@ def _parse_thread_clustering(payload: dict[str, Any]) -> ThreadClusteringConfig:
             max_articles_per_call=150,
             max_articles_per_thread=12,
             max_refinement_rounds=1,
+            temperature=0.5,
         )
     provider = _string(section, "provider", default_provider)
     if provider != "deepseek":
@@ -230,6 +231,7 @@ def _parse_thread_clustering(payload: dict[str, Any]) -> ThreadClusteringConfig:
         enable_post_merge=_bool(section, "enable_post_merge", default=True),
         merge_overlap_threshold=_float(section, "merge_overlap_threshold", default=0.30),
         enable_chunk_merge=_bool(section, "enable_chunk_merge", default=True),
+        temperature=_float(section, "temperature", 0.5),
     )
 
 
@@ -242,6 +244,8 @@ def _parse_ranking(payload: dict[str, Any]) -> RankingConfig:
     return RankingConfig(
         importance_floor=_float(section, "importance_floor", 0.15),
         keep_major_always=_bool(section, "keep_major_always", True),
+        source_weight=_float(section, "source_weight", 0.65),
+        recency_weight=_float(section, "recency_weight", 0.35),
     )
 
 

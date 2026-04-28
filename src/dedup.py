@@ -245,13 +245,17 @@ def _rebuild_thread_after_within_dedup(
     """Return a thread with deduplicated article bodies but preserved source coverage."""
 
     ordered_articles = _sort_articles_for_clustering(canonical_articles, priorities)
+    distinct_sources: list[str] = []
+    for article in ordered_articles:
+        if article.source_name not in distinct_sources:
+            distinct_sources.append(article.source_name)
     return StoryThread(
         thread_id=thread.thread_id,
         topic=thread.topic,
         topic_en=thread.topic_en,
         articles=ordered_articles,
-        source_names=thread.source_names,
-        source_count=thread.source_count,
+        source_names=distinct_sources,
+        source_count=len(distinct_sources),
         primary=ordered_articles[0],
         latest_published=thread.latest_published,
         rationale=thread.rationale,

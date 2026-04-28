@@ -95,10 +95,13 @@ def sample_config(tmp_path: Path) -> AppConfig:
             max_articles_per_call=150,
             max_articles_per_thread=12,
             max_refinement_rounds=1,
+            temperature=0.5,
         ),
         ranking=RankingConfig(
             importance_floor=0.0,
             keep_major_always=True,
+            source_weight=0.65,
+            recency_weight=0.35,
         ),
     )
 
