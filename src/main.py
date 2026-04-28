@@ -335,7 +335,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Daily Headline Agent")
     parser.add_argument("--config", default="config.yaml", help="Path to config.yaml")
     parser.add_argument("--schedule", action="store_true", help="Run with APScheduler")
-    parser.add_argument("--dry-run", action="store_true", help="Fetch and deduplicate without LLM calls")
+    parser.add_argument("--dry-run", action="store_true", help="Fetch, cluster, dedup, and rank without summary LLM calls")
     parser.add_argument("--dump-threads", action="store_true", help="Fetch and print story-thread assignments")
     parser.add_argument(
         "--dedup-within-threads",

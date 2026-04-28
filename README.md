@@ -5,8 +5,10 @@
 ## 功能
 
 - **故事线聚类**：将不同媒体对同一事件的报道归为一组，而不是逐条堆砌
-- **跨批次合并**：文章数量较多时分批聚类，批次间重复故事线自动合并
-- **线内去重**：同一故事线内的近似重复报道自动过滤
+- **跨批次合并**：文章较多时分批聚类，LLM 自动合并跨批次重复故事线
+- **启发式合并**：基于标题 token 重叠的 Jaccard 相似度合并遗漏的重复线
+- **线内去重**：同一故事线内的近似重复报道自动过滤（embedding 或词法）
+- **优先级排序**：按来源多样性和时效性打分，多源线程保底保留
 - **两层简报**：按重要性分为「🔥 今日头条」和「📎 其他值得关注」
 - **质量评估**：可选 LLM 评分，从覆盖度、多样性、清晰度等五个维度打分
 - **多种输出与投递**：支持 Markdown、JSON，以及可选邮件、Telegram 推送
@@ -40,7 +42,7 @@ python -m src.main
 | `--config <文件>` | 使用指定配置文件，默认 `config.yaml` |
 | `--dry-run` | 执行抓取、聚类、线内去重、排序，跳过 map/reduce 摘要生成与文件输出 |
 | `--dump-threads` | 调用聚类流程并打印故事线分组结果，用于调试聚类效果 |
-| `--dump-threads --dedup-within-threads` | 在打印前额外做一轮线内近重复去重 |
+| `--dedup-within-threads` | 配合 `--dump-threads` 使用，打印前额外做一轮线内近重复去重 |
 | `--eval` | 完整运行后额外调用 LLM 对简报质量打分 |
 | `--schedule` | 按 `schedule.run_at` 配置的每日时间持续定时运行 |
 
@@ -61,38 +63,67 @@ sources:
 pipeline:
   max_articles_per_source: 15
   importance_threshold: 5
-  exclude_summary_keywords: ["最新动态", "持续更新", "live updates"]
+  exclude_summary_keywords: ["最新动态", "持续更新", "直播", "live updates", "here's the latest"]
+
+# LLM 配置（必需）
+llm:
+  provider: "deepseek"
+  model: "deepseek-v4-flash"
+  base_url: "https://api.deepseek.com"
+  api_key_env: "DEEPSEEK_API_KEY"
+  max_tokens: 4096
+  temperature: 0.3
 
 # 线内近重复去重
 dedup:
   method: "embedding"
+  model: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+  cache_embeddings: true
   within_thread:
     similarity_threshold: 0.88
 
-# 故事线聚类
+# 故事线聚类（使用独立模型和参数）
 thread_clustering:
+  provider: "deepseek"
+  model: "deepseek-v4-flash"
+  max_retries: 2
   max_articles_per_call: 150   # 超过此数量时分批处理
   max_articles_per_thread: 12  # 单条故事线最多文章数
+  max_refinement_rounds: 1
+  max_tokens: 16384            # 聚类输出的 JSON 较大，需要更高限额
+  temperature: 0.3
   enable_post_merge: true      # 启用启发式跨线合并
+  merge_overlap_threshold: 0.30
   enable_chunk_merge: true     # 启用分批后的 LLM 合并
 
-# 排序与摘要
+# 排序
 ranking:
   importance_floor: 0.15
   keep_major_always: true
+  source_weight: 0.65          # 来源多样性权重
+  recency_weight: 0.35         # 时效性权重
 
 summarizer:
   map:
     batch_size: 5
+    max_retries: 2
   reduce:
     top_k: 15
+    max_retries: 2
 
 # 输出
 output:
   markdown:
     directory: "output/md"
+    group_by_month: true
   json:
+    enabled: true
     directory: "output/json"
+    group_by_month: true
+  email:
+    enabled: false
+  telegram:
+    enabled: false
 
 # 定时运行（每日 HH:MM）
 schedule:
