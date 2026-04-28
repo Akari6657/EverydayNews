@@ -175,7 +175,7 @@ class AppConfig:
     thread_clustering: ThreadClusteringConfig = field(
         default_factory=lambda: ThreadClusteringConfig(
             provider="deepseek",
-            model="deepseek-chat",
+            model="deepseek-v4-flash",
             max_retries=2,
             max_articles_per_call=150,
             max_articles_per_thread=12,

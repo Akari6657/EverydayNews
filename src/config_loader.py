@@ -206,7 +206,7 @@ def _parse_thread_clustering(payload: dict[str, Any]) -> ThreadClusteringConfig:
 
     llm_section = _mapping(payload, "llm", required=False)
     default_provider = _string(llm_section, "provider", "deepseek")
-    default_model = _string(llm_section, "model", "deepseek-chat")
+    default_model = _string(llm_section, "model", "deepseek-v4-flash")
     section = _mapping(payload, "thread_clustering", required=False)
     if not section:
         return ThreadClusteringConfig(

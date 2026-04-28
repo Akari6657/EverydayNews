@@ -76,7 +76,7 @@ dedup:
 
 thread_clustering:
   provider: "deepseek"
-  model: "deepseek-chat"
+  model: "deepseek-v4-flash"
   max_retries: 2
   max_articles_per_call: 150
   max_articles_per_thread: 12
@@ -100,7 +100,7 @@ summarizer:
 
 llm:
   provider: "deepseek"
-  model: "deepseek-chat"
+  model: "deepseek-v4-flash"
   base_url: "https://api.deepseek.com"
   api_key_env: "DEEPSEEK_API_KEY"
   max_tokens: 4096
